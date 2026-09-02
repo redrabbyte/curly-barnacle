@@ -20,6 +20,7 @@ import { getRates, suggestRate } from '../fx';
 import { hasUsableTotal, type FiscalReceipt } from '../receiptCode';
 import { ReceiptScan } from './ReceiptScan';
 import { upsertExpenseLocal } from '../sync';
+import { percentPlan } from '../percentSplit';
 import { uuid } from '../uuid';
 import { AppError } from '../i18n/errors';
 import { categoryLabel } from '../i18n/categories';
@@ -105,6 +106,15 @@ export function ExpenseEditor({ group, members, meId, existing, onDone }: Props)
   );
   const [error, setError] = useState<string | null>(null);
 
+  // Blank percentage fields take an even cut of what the entered ones leave,
+  // and every field is counted in basis points — see percentSplit.ts for why
+  // both of those matter. One plan feeds the running total, what the fields
+  // show, and what gets saved, so those three cannot drift apart.
+  const percentSplit = percentPlan(
+    members.map((m) => m.userId),
+    percent,
+  );
+
   function buildMeta(): OwedInput {
     const ordered = members.map((m) => m.userId);
     switch (mode) {
@@ -118,15 +128,10 @@ export function ExpenseEditor({ group, members, meId, existing, onDone }: Props)
             .map((id) => ({ userId: id, amountMinor: parseToMinor(exact[id]!, currency) })),
         };
       case 'percent':
+        if (percentSplit.invalid.length > 0) throw new AppError('app.badPercentage');
         return {
           mode,
-          entries: ordered
-            .filter((id) => percent[id]?.trim())
-            .map((id) => {
-              const v = Number(percent[id]!.replace(',', '.'));
-              if (!Number.isFinite(v) || v < 0) throw new AppError('app.badPercentage');
-              return { userId: id, percentBp: Math.round(v * 100) };
-            }),
+          entries: ordered.map((userId) => ({ userId, percentBp: percentSplit.bp.get(userId) ?? 0 })),
         };
       case 'shares':
         return {
@@ -144,9 +149,10 @@ export function ExpenseEditor({ group, members, meId, existing, onDone }: Props)
 
   // Cross-fill: once the active mode resolves to a valid split, prefill the
   // equivalent representations for the other modes so switching tabs shows
-  // matching numbers. exact<->percent are mutual; shares seeds both exact and
-  // percent (and equal does too) — but shares is never auto-derived, since
-  // there is no clean inverse from arbitrary amounts back to whole shares.
+  // matching numbers. exact<->percent are mutual; equal and shares seed exact,
+  // and percent only where it could not fill itself in (below) — but shares is
+  // never auto-derived, since there is no clean inverse from arbitrary amounts
+  // back to whole shares.
   useEffect(() => {
     let owed: { userId: string; owedMinor: number }[];
     try {
@@ -161,9 +167,29 @@ export function ExpenseEditor({ group, members, meId, existing, onDone }: Props)
     } catch {
       return; // total is zero — nothing to apportion
     }
-    const nextPercent = Object.fromEntries(owed.map((o, i) => [o.userId, trimNum(bp[i]! / 100)]));
     if (mode !== 'exact') setExact((prev) => (sameRecord(prev, nextExact) ? prev : nextExact));
-    if (mode !== 'percent') setPercent((prev) => (sameRecord(prev, nextPercent) ? prev : nextPercent));
+    // The percent tab fills its own blanks with an even share of what is left,
+    // so seeding it with an even split would only swap elastic fields for
+    // pinned ones saying the same thing — and then typing one number would no
+    // longer move the others. Write down a split the tab could not have
+    // reached by itself; hand an even one back by clearing the fields, which
+    // also keeps a stale uneven split from surviving a switch to equal mode.
+    if (mode !== 'percent') {
+      // Over every member, not only the ones in the split: somebody the active
+      // mode leaves out owes 0%, and under the percent tab's rules that has to
+      // be written down, since a blank field would hand them a share back.
+      const ids = members.map((m) => m.userId);
+      const owedBp = new Map(owed.map((o, i) => [o.userId, bp[i]!]));
+      const seeded = ids.map((id) => owedBp.get(id) ?? 0);
+      const even = allocateByWeights(
+        10_000,
+        ids.map((userId) => ({ userId, weight: 1 })),
+      );
+      const nextPercent = seeded.every((v, i) => v === even[i])
+        ? {}
+        : Object.fromEntries(ids.map((id, i) => [id, trimNum(seeded[i]! / 100)]));
+      setPercent((prev) => (sameRecord(prev, nextPercent) ? prev : nextPercent));
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode, amount, currency, equalSet, exact, percent, shares, members]);
 
@@ -218,11 +244,7 @@ export function ExpenseEditor({ group, members, meId, existing, onDone }: Props)
   const exactEntered = members.reduce((s, m) => s + parseSafe(exact[m.userId]), 0);
   const exactRemaining = parseSafe(amount) - exactEntered;
 
-  const percentEntered = members.reduce((s, m) => {
-    const v = Number((percent[m.userId] ?? '').replace(',', '.'));
-    return s + (Number.isFinite(v) ? v : 0);
-  }, 0);
-  const percentRemaining = Math.round((100 - percentEntered) * 100) / 100;
+  const percentRemaining = percentSplit.remaining;
 
   // Conversion rate to the group's default currency, frozen on the entry.
   const def = group.defaultCurrency;
@@ -639,7 +661,11 @@ export function ExpenseEditor({ group, members, meId, existing, onDone }: Props)
                   <input
                     className={smallInput}
                     inputMode="decimal"
-                    placeholder="0"
+                    // The share this field would take if it is left alone. As
+                    // a placeholder rather than a value: it reads grey, the
+                    // way the "0" it replaced did, and typing writes a number
+                    // of your own instead of editing one you never entered.
+                    placeholder={trimNum((percentSplit.bp.get(m.userId) ?? 0) / 100)}
                     value={percent[m.userId] ?? ''}
                     onChange={(e) => setPercent({ ...percent, [m.userId]: e.target.value })}
                   />
