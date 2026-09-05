@@ -244,6 +244,9 @@ export const en = {
 
   // --- the expense editor --------------------------------------------------
   'editor.what': 'What was it?',
+  // The rest of the new-entry form is folded away until you type or ask.
+  'editor.showOptions': 'Show',
+  'editor.hideOptions': 'Hide',
   // A worked example of the format, so it follows the reader's decimal mark.
   // `parseToMinor` accepts either, which is what makes translating it safe.
   'editor.amount': '0.00',

@@ -60,10 +60,18 @@ interface Props {
   meId: string;
   existing?: ExpenseDto;
   onDone?: () => void;
+  /**
+   * Start folded: only the description and a show/hide button, everything
+   * else appears once you start typing or press the button. For the form that
+   * sits above the expense list, where it would otherwise take the whole first
+   * screen away from the entries it is there to add to.
+   */
+  collapsible?: boolean;
 }
 
-export function ExpenseEditor({ group, members, meId, existing, onDone }: Props) {
+export function ExpenseEditor({ group, members, meId, existing, onDone, collapsible = false }: Props) {
   const t = useT();
+  const [open, setOpen] = useState(!collapsible);
   const meta = existing?.splitMeta;
   const [description, setDescription] = useState(existing?.description ?? '');
   const [amount, setAmount] = useState(existing ? toInput(existing.amountMinor, existing.currency) : '');
@@ -359,6 +367,12 @@ export function ExpenseEditor({ group, members, meId, existing, onDone }: Props)
 
   async function submit(e: FormEvent) {
     e.preventDefault();
+    // Enter in the description while folded: the fields that decide whether
+    // this can be saved are out of sight, so show them rather than fail on one.
+    if (!open) {
+      setOpen(true);
+      return;
+    }
     setError(null);
     try {
       const amountMinor = parseToMinor(amount, currency);
@@ -417,6 +431,9 @@ export function ExpenseEditor({ group, members, meId, existing, onDone }: Props)
         setPaid({});
         setEqualSet(new Set(members.map((m) => m.userId)));
         setAmountManual(false);
+        // Back to the resting state: the entry is in the list now, and the
+        // next one begins with its name, which unfolds the rest again.
+        if (collapsible) setOpen(false);
       }
       onDone?.();
     } catch (err) {
@@ -434,298 +451,323 @@ export function ExpenseEditor({ group, members, meId, existing, onDone }: Props)
   const smallInput = 'w-24 rounded border border-slate-300 dark:border-slate-600 dark:bg-slate-800 px-2 py-1 text-right';
   return (
     <form onSubmit={(e) => void submit(e)} className="flex flex-col gap-2 rounded border border-slate-200 dark:border-slate-700 p-3">
-      <div className="flex flex-wrap gap-2">
+      <div className="flex gap-2">
         <input
-          // Always a line of its own. Sharing one with the amount meant the
-          // wrap point moved with the viewport — at 393px the description and
-          // the amount sat together, at 360px they did not — so the row looked
-          // different on every handset. It also holds the longest text here.
-          className={`${input} basis-full`}
+          // A line of its own, shared only with the show/hide button. Sharing
+          // one with the amount meant the wrap point moved with the viewport —
+          // at 393px the description and the amount sat together, at 360px
+          // they did not — so the row looked different on every handset. It
+          // also holds the longest text here.
+          className={`${input} min-w-0 flex-1`}
           placeholder={t('editor.what')}
           value={description}
-          onChange={(e) => setDescription(e.target.value)}
+          onChange={(e) => {
+            setDescription(e.target.value);
+            // Typing a name is the first step of adding an entry: bring the
+            // rest of the form along instead of asking for a second gesture.
+            if (!open) setOpen(true);
+          }}
           required
           maxLength={200}
         />
-        <input
-          // Takes whatever the unit and the scan button leave, so the line ends
-          // flush at every width instead of trailing off. The floor is about
-          // five characters — below that the field stops looking like somewhere
-          // you type a number, and it is what the line-breaking measures this
-          // field by, so it also decides whether the three fit together at all.
-          className={`${input} min-w-20 flex-1 ${multiPayer ? 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400' : ''}`}
-          placeholder={t('editor.amount')}
-          inputMode="decimal"
-          value={amount}
-          onChange={(e) => {
-            setAmount(e.target.value);
-            setAmountManual(e.target.value.trim() !== '');
-          }}
-          readOnly={multiPayer}
-          title={multiPayer ? t('editor.totalIsSum') : undefined}
-          required
-        />
-        <select className={unitSelect} value={currency} onChange={(e) => setCurrency(e.target.value)}>
-          {[...new Set([currency, group.defaultCurrency, ...COMMON_CURRENCIES])].map((c) => (
-            <option key={c}>{c}</option>
-          ))}
-        </select>
-        {/* Beside the currency, since a scan sets both it and the amount.
-            Not offered while editing: the receipt that produced an existing
-            entry is not the one in your hand, and overwriting a saved total
-            from a scan is a surprise nobody asked for. */}
-        {!existing && <ReceiptScan onRead={applyReceipt} />}
+        {collapsible && (
+          <button
+            type="button"
+            onClick={() => setOpen(!open)}
+            aria-expanded={open}
+            className="shrink-0 rounded bg-slate-100 dark:bg-slate-800 px-3 py-2 text-sm text-slate-600 dark:text-slate-300"
+          >
+            {open ? t('editor.hideOptions') : t('editor.showOptions')}
+          </button>
+        )}
       </div>
 
-      {currency !== def && (
-        <label className="flex flex-wrap items-center gap-2 text-sm text-slate-600 dark:text-slate-300">
-          <span>
-            1 {currency} =
-          </span>
-          <input
-            className={`${smallInput} w-28`}
-            inputMode="decimal"
-            placeholder={t('editor.rate')}
-            value={rateStr}
-            onChange={(e) => setRateStr(e.target.value)}
-          />
-          <span>{def} {fx?.day ? t('editor.ratePrefilled') : t('editor.rateOffline')}</span>
-        </label>
-      )}
+      {open && (
+        <>
+          <div className="flex flex-wrap gap-2">
+            <input
+              // Takes whatever the unit and the scan button leave, so the line ends
+              // flush at every width instead of trailing off. The floor is about
+              // five characters — below that the field stops looking like somewhere
+              // you type a number, and it is what the line-breaking measures this
+              // field by, so it also decides whether the three fit together at all.
+              className={`${input} min-w-20 flex-1 ${multiPayer ? 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400' : ''}`}
+              placeholder={t('editor.amount')}
+              inputMode="decimal"
+              value={amount}
+              onChange={(e) => {
+                setAmount(e.target.value);
+                setAmountManual(e.target.value.trim() !== '');
+              }}
+              readOnly={multiPayer}
+              title={multiPayer ? t('editor.totalIsSum') : undefined}
+              required
+            />
+            <select className={unitSelect} value={currency} onChange={(e) => setCurrency(e.target.value)}>
+              {[...new Set([currency, group.defaultCurrency, ...COMMON_CURRENCIES])].map((c) => (
+                <option key={c}>{c}</option>
+              ))}
+            </select>
+            {/* Beside the currency, since a scan sets both it and the amount.
+                Not offered while editing: the receipt that produced an existing
+                entry is not the one in your hand, and overwriting a saved total
+                from a scan is a surprise nobody asked for. */}
+            {!existing && <ReceiptScan onRead={applyReceipt} />}
+          </div>
 
-      {existing && (
-        <div className="flex flex-wrap items-center gap-2 text-sm text-slate-600 dark:text-slate-300">
-          <span>{t('editor.convertTo')}</span>
-          <select className={input} value={convTo} onChange={(e) => pickConvTarget(e.target.value)}>
-            <option value="">{t('editor.chooseUnit')}</option>
-            {[...new Set([def, ...COMMON_CURRENCIES])].filter((c) => c !== currency).map((c) => (
-              <option key={c}>{c}</option>
-            ))}
-          </select>
-          {convTo && (
-            <>
-              <span>{t('editor.convertAt', { currency })}</span>
+          {currency !== def && (
+            <label className="flex flex-wrap items-center gap-2 text-sm text-slate-600 dark:text-slate-300">
+              <span>
+                1 {currency} =
+              </span>
               <input
                 className={`${smallInput} w-28`}
                 inputMode="decimal"
-                value={convRate}
-                onChange={(e) => setConvRate(e.target.value)}
+                placeholder={t('editor.rate')}
+                value={rateStr}
+                onChange={(e) => setRateStr(e.target.value)}
               />
-              <span>{convTo}</span>
-              <button type="button" onClick={doConvert} className="rounded bg-slate-200 px-2 py-1 text-slate-700 dark:text-slate-200">
-                {t('editor.convert')}
-              </button>
-            </>
+              <span>{def} {fx?.day ? t('editor.ratePrefilled') : t('editor.rateOffline')}</span>
+            </label>
           )}
-        </div>
-      )}
 
-      <div className="flex flex-wrap gap-2 text-sm">
-        <select className={input} value={category} onChange={(e) => setCategory(e.target.value)}>
-          {CATEGORIES.map((c) => (
-            // The value is pinned to the stored key: without it the option's
-            // text is the value, and translating the label would rewrite the
-            // category that gets sealed into the expense.
-            <option key={c} value={c}>
-              {categoryLabel(t, c)}
-            </option>
-          ))}
-        </select>
-        <input className={input} type="datetime-local" value={date} onChange={(e) => setDate(e.target.value)} required />
-      </div>
+          {existing && (
+            <div className="flex flex-wrap items-center gap-2 text-sm text-slate-600 dark:text-slate-300">
+              <span>{t('editor.convertTo')}</span>
+              <select className={input} value={convTo} onChange={(e) => pickConvTarget(e.target.value)}>
+                <option value="">{t('editor.chooseUnit')}</option>
+                {[...new Set([def, ...COMMON_CURRENCIES])].filter((c) => c !== currency).map((c) => (
+                  <option key={c}>{c}</option>
+                ))}
+              </select>
+              {convTo && (
+                <>
+                  <span>{t('editor.convertAt', { currency })}</span>
+                  <input
+                    className={`${smallInput} w-28`}
+                    inputMode="decimal"
+                    value={convRate}
+                    onChange={(e) => setConvRate(e.target.value)}
+                  />
+                  <span>{convTo}</span>
+                  <button type="button" onClick={doConvert} className="rounded bg-slate-200 px-2 py-1 text-slate-700 dark:text-slate-200">
+                    {t('editor.convert')}
+                  </button>
+                </>
+              )}
+            </div>
+          )}
 
-      <fieldset className="flex flex-col gap-1 text-sm">
-        <legend className="mb-1 text-slate-500 dark:text-slate-400">
-          {t('editor.paidBy')}{' '}
-          <button
-            type="button"
-            className="text-teal-700 dark:text-teal-300 underline"
-            onClick={() => setMultiPayer(!multiPayer)}
-          >
-            {multiPayer ? t('editor.singlePayer') : t('editor.multiplePayers')}
-          </button>
-        </legend>
-        {multiPayer ? (
-          <div className="flex flex-col gap-1">
-            <div className="flex flex-wrap gap-3">
+          <div className="flex flex-wrap gap-2 text-sm">
+            <select className={input} value={category} onChange={(e) => setCategory(e.target.value)}>
+              {CATEGORIES.map((c) => (
+                // The value is pinned to the stored key: without it the option's
+                // text is the value, and translating the label would rewrite the
+                // category that gets sealed into the expense.
+                <option key={c} value={c}>
+                  {categoryLabel(t, c)}
+                </option>
+              ))}
+            </select>
+            <input className={input} type="datetime-local" value={date} onChange={(e) => setDate(e.target.value)} required />
+          </div>
+
+          <fieldset className="flex flex-col gap-1 text-sm">
+            <legend className="mb-1 text-slate-500 dark:text-slate-400">
+              {t('editor.paidBy')}{' '}
+              <button
+                type="button"
+                className="text-teal-700 dark:text-teal-300 underline"
+                onClick={() => setMultiPayer(!multiPayer)}
+              >
+                {multiPayer ? t('editor.singlePayer') : t('editor.multiplePayers')}
+              </button>
+            </legend>
+            {multiPayer ? (
+              <div className="flex flex-col gap-1">
+                <div className="flex flex-wrap gap-3">
+                  {members.map((m) => (
+                    <label key={m.userId} className="flex items-center gap-1">
+                      {m.displayName}
+                      <input
+                        className={smallInput}
+                        inputMode="decimal"
+                        placeholder={t('editor.amount')}
+                        value={paid[m.userId] ?? ''}
+                        onChange={(e) => setPaid({ ...paid, [m.userId]: e.target.value })}
+                      />
+                    </label>
+                  ))}
+                </div>
+                <span className="text-xs text-slate-400">
+                  {t('editor.totalOfPayers', { amount: amount || '0', currency })}
+                </span>
+              </div>
+            ) : (
+              <select className={input} value={payer} onChange={(e) => setPayer(e.target.value)}>
+                {members.map((m) => (
+                  <option key={m.userId} value={m.userId}>
+                    {m.displayName}
+                  </option>
+                ))}
+              </select>
+            )}
+          </fieldset>
+
+          <fieldset className="flex flex-col gap-2 text-sm">
+            <legend className="mb-1 text-slate-500 dark:text-slate-400">
+              {t('editor.split')}{' '}
+              {MODES.map(({ key, label }) => (
+                <button
+                  key={key}
+                  type="button"
+                  onClick={() => setMode(key)}
+                  // my-0.5: four of these wrap to two rows on a phone, and inline
+                  // buttons with only a right margin end up stacked edge to edge.
+                  className={`mr-1 my-0.5 rounded px-2 py-0.5 ${
+                    mode === key ? 'bg-teal-700 text-white' : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300'
+                  }`}
+                >
+                  {t(label)}
+                </button>
+              ))}
+              {mode === 'percent' && (
+                <span
+                  className={`ml-2 ${
+                    percentRemaining === 0
+                      ? 'text-emerald-700 dark:text-emerald-400'
+                      : percentRemaining < 0
+                        ? 'text-red-600 dark:text-red-400'
+                        : 'text-slate-500 dark:text-slate-400'
+                  }`}
+                >
+                  {percentRemaining >= 0
+                    ? t('editor.percentRemaining', { percent: percentRemaining })
+                    : t('editor.percentOver', { percent: -percentRemaining })}
+                </span>
+              )}
+              {mode === 'exact' &&
+                (amountManual || multiPayer ? (
+                  <span
+                    className={`ml-2 ${
+                      exactRemaining === 0
+                        ? 'text-emerald-700 dark:text-emerald-400'
+                        : exactRemaining < 0
+                          ? 'text-red-600 dark:text-red-400'
+                          : 'text-slate-500 dark:text-slate-400'
+                    }`}
+                  >
+                    {exactRemaining === 0
+                      ? t('editor.balanced')
+                      : exactRemaining > 0
+                        ? t('editor.amountRemaining', { amount: toInput(exactRemaining, currency), currency })
+                        : t('editor.amountOver', { amount: toInput(-exactRemaining, currency), currency })}
+                  </span>
+                ) : (
+                  <span className="ml-2 text-slate-400">
+                    {t('editor.totalFromAmounts', { amount: toInput(exactEntered, currency), currency })}
+                  </span>
+                ))}
+            </legend>
+            {/* mt-1.5: the legend's own margin left the checkboxes sitting on the
+                mode buttons' heels; a third of a line of air separates the two rows. */}
+            <div className="mt-1.5 flex flex-wrap gap-3">
               {members.map((m) => (
                 <label key={m.userId} className="flex items-center gap-1">
+                  {mode === 'equal' && (
+                    <input
+                      type="checkbox"
+                      checked={equalSet.has(m.userId)}
+                      onChange={() => {
+                        const next = new Set(equalSet);
+                        if (next.has(m.userId)) next.delete(m.userId);
+                        else next.add(m.userId);
+                        setEqualSet(next);
+                      }}
+                    />
+                  )}
                   {m.displayName}
-                  <input
-                    className={smallInput}
-                    inputMode="decimal"
-                    placeholder={t('editor.amount')}
-                    value={paid[m.userId] ?? ''}
-                    onChange={(e) => setPaid({ ...paid, [m.userId]: e.target.value })}
-                  />
+                  {mode === 'exact' && (
+                    <input
+                      className={smallInput}
+                      inputMode="decimal"
+                      placeholder={t('editor.amount')}
+                      value={exact[m.userId] ?? ''}
+                      onChange={(e) => setExact({ ...exact, [m.userId]: e.target.value })}
+                    />
+                  )}
+                  {mode === 'percent' && (
+                    <span className="flex items-center gap-0.5">
+                      <input
+                        className={smallInput}
+                        inputMode="decimal"
+                        // The share this field would take if it is left alone. As
+                        // a placeholder rather than a value: it reads grey, the
+                        // way the "0" it replaced did, and typing writes a number
+                        // of your own instead of editing one you never entered.
+                        placeholder={trimNum((percentSplit.bp.get(m.userId) ?? 0) / 100)}
+                        value={percent[m.userId] ?? ''}
+                        onChange={(e) => setPercent({ ...percent, [m.userId]: e.target.value })}
+                      />
+                      %
+                    </span>
+                  )}
+                  {mode === 'shares' && (
+                    <input
+                      className={smallInput}
+                      inputMode="numeric"
+                      placeholder="0"
+                      value={shares[m.userId] ?? ''}
+                      onChange={(e) => setShares({ ...shares, [m.userId]: e.target.value })}
+                    />
+                  )}
                 </label>
               ))}
             </div>
-            <span className="text-xs text-slate-400">
-              {t('editor.totalOfPayers', { amount: amount || '0', currency })}
-            </span>
-          </div>
-        ) : (
-          <select className={input} value={payer} onChange={(e) => setPayer(e.target.value)}>
-            {members.map((m) => (
-              <option key={m.userId} value={m.userId}>
-                {m.displayName}
-              </option>
-            ))}
-          </select>
-        )}
-      </fieldset>
+          </fieldset>
 
-      <fieldset className="flex flex-col gap-2 text-sm">
-        <legend className="mb-1 text-slate-500 dark:text-slate-400">
-          {t('editor.split')}{' '}
-          {MODES.map(({ key, label }) => (
-            <button
-              key={key}
-              type="button"
-              onClick={() => setMode(key)}
-              // my-0.5: four of these wrap to two rows on a phone, and inline
-              // buttons with only a right margin end up stacked edge to edge.
-              className={`mr-1 my-0.5 rounded px-2 py-0.5 ${
-                mode === key ? 'bg-teal-700 text-white' : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300'
-              }`}
-            >
-              {t(label)}
-            </button>
-          ))}
-          {mode === 'percent' && (
-            <span
-              className={`ml-2 ${
-                percentRemaining === 0
-                  ? 'text-emerald-700 dark:text-emerald-400'
-                  : percentRemaining < 0
-                    ? 'text-red-600 dark:text-red-400'
-                    : 'text-slate-500 dark:text-slate-400'
-              }`}
-            >
-              {percentRemaining >= 0
-                ? t('editor.percentRemaining', { percent: percentRemaining })
-                : t('editor.percentOver', { percent: -percentRemaining })}
-            </span>
+          {previewSplits && previewSplits.some((s) => s.paidMinor > 0 || s.owedMinor > 0) && (
+            <table className="text-sm">
+              <thead>
+                <tr className="text-slate-400">
+                  <th className="text-left font-normal"></th>
+                  <th className="w-24 text-right font-normal">{t('editor.paid')}</th>
+                  <th className="w-24 text-right font-normal">{t('editor.owes')}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {previewSplits.map((s) => (
+                  <tr key={s.userId}>
+                    <td className="pr-3 text-slate-600 dark:text-slate-300">{members.find((m) => m.userId === s.userId)?.displayName}</td>
+                    <td className="text-right tabular-nums text-slate-500 dark:text-slate-400">{toInput(s.paidMinor, currency)}</td>
+                    <td className="text-right tabular-nums text-slate-700 dark:text-slate-200">{toInput(s.owedMinor, currency)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           )}
-          {mode === 'exact' &&
-            (amountManual || multiPayer ? (
-              <span
-                className={`ml-2 ${
-                  exactRemaining === 0
-                    ? 'text-emerald-700 dark:text-emerald-400'
-                    : exactRemaining < 0
-                      ? 'text-red-600 dark:text-red-400'
-                      : 'text-slate-500 dark:text-slate-400'
-                }`}
-              >
-                {exactRemaining === 0
-                  ? t('editor.balanced')
-                  : exactRemaining > 0
-                    ? t('editor.amountRemaining', { amount: toInput(exactRemaining, currency), currency })
-                    : t('editor.amountOver', { amount: toInput(-exactRemaining, currency), currency })}
-              </span>
-            ) : (
-              <span className="ml-2 text-slate-400">
-                {t('editor.totalFromAmounts', { amount: toInput(exactEntered, currency), currency })}
-              </span>
-            ))}
-        </legend>
-        <div className="flex flex-wrap gap-3">
-          {members.map((m) => (
-            <label key={m.userId} className="flex items-center gap-1">
-              {mode === 'equal' && (
-                <input
-                  type="checkbox"
-                  checked={equalSet.has(m.userId)}
-                  onChange={() => {
-                    const next = new Set(equalSet);
-                    if (next.has(m.userId)) next.delete(m.userId);
-                    else next.add(m.userId);
-                    setEqualSet(next);
-                  }}
-                />
-              )}
-              {m.displayName}
-              {mode === 'exact' && (
-                <input
-                  className={smallInput}
-                  inputMode="decimal"
-                  placeholder={t('editor.amount')}
-                  value={exact[m.userId] ?? ''}
-                  onChange={(e) => setExact({ ...exact, [m.userId]: e.target.value })}
-                />
-              )}
-              {mode === 'percent' && (
-                <span className="flex items-center gap-0.5">
-                  <input
-                    className={smallInput}
-                    inputMode="decimal"
-                    // The share this field would take if it is left alone. As
-                    // a placeholder rather than a value: it reads grey, the
-                    // way the "0" it replaced did, and typing writes a number
-                    // of your own instead of editing one you never entered.
-                    placeholder={trimNum((percentSplit.bp.get(m.userId) ?? 0) / 100)}
-                    value={percent[m.userId] ?? ''}
-                    onChange={(e) => setPercent({ ...percent, [m.userId]: e.target.value })}
-                  />
-                  %
-                </span>
-              )}
-              {mode === 'shares' && (
-                <input
-                  className={smallInput}
-                  inputMode="numeric"
-                  placeholder="0"
-                  value={shares[m.userId] ?? ''}
-                  onChange={(e) => setShares({ ...shares, [m.userId]: e.target.value })}
-                />
-              )}
-            </label>
-          ))}
-        </div>
-      </fieldset>
 
-      {previewSplits && previewSplits.some((s) => s.paidMinor > 0 || s.owedMinor > 0) && (
-        <table className="text-sm">
-          <thead>
-            <tr className="text-slate-400">
-              <th className="text-left font-normal"></th>
-              <th className="w-24 text-right font-normal">{t('editor.paid')}</th>
-              <th className="w-24 text-right font-normal">{t('editor.owes')}</th>
-            </tr>
-          </thead>
-          <tbody>
-            {previewSplits.map((s) => (
-              <tr key={s.userId}>
-                <td className="pr-3 text-slate-600 dark:text-slate-300">{members.find((m) => m.userId === s.userId)?.displayName}</td>
-                <td className="text-right tabular-nums text-slate-500 dark:text-slate-400">{toInput(s.paidMinor, currency)}</td>
-                <td className="text-right tabular-nums text-slate-700 dark:text-slate-200">{toInput(s.owedMinor, currency)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+          <textarea
+            className={`${input} text-sm`}
+            placeholder={t('editor.note')}
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            rows={note ? 2 : 1}
+            maxLength={2000}
+          />
+          {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
+          <div className="flex gap-2">
+            <button className="rounded bg-teal-700 px-4 py-2 font-medium text-white">
+              {existing ? t('editor.save') : t('editor.add')}
+            </button>
+            {onDone && (
+              <button type="button" onClick={onDone} className="px-2 text-sm text-slate-500 dark:text-slate-400 underline">
+                {t('editor.cancel')}
+              </button>
+            )}
+          </div>
+        </>
       )}
-
-      <textarea
-        className={`${input} text-sm`}
-        placeholder={t('editor.note')}
-        value={note}
-        onChange={(e) => setNote(e.target.value)}
-        rows={note ? 2 : 1}
-        maxLength={2000}
-      />
-      {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
-      <div className="flex gap-2">
-        <button className="rounded bg-teal-700 px-4 py-2 font-medium text-white">
-          {existing ? t('editor.save') : t('editor.add')}
-        </button>
-        {onDone && (
-          <button type="button" onClick={onDone} className="px-2 text-sm text-slate-500 dark:text-slate-400 underline">
-            {t('editor.cancel')}
-          </button>
-        )}
-      </div>
     </form>
   );
 }

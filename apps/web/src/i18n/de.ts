@@ -235,6 +235,8 @@ export const de: Catalogue = {
 
   // --- the expense editor --------------------------------------------------
   'editor.what': 'Was war’s?',
+  'editor.showOptions': 'Anzeigen',
+  'editor.hideOptions': 'Ausblenden',
   'editor.amount': '0,00',
   'editor.totalIsSum': 'Gesamt = Summe der Zahlerbeträge',
   'editor.rate': 'Kurs',

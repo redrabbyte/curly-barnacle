@@ -216,7 +216,7 @@ export function GroupPage() {
 
       {tab === 'expenses' && (
         <>
-          <ExpenseEditor group={group} members={activeMembers} meId={user.id} />
+          <ExpenseEditor group={group} members={activeMembers} meId={user.id} collapsible />
           {sorted.length > 0 && (
             <div className="relative">
               {/* Deliberately not type="search": Chromium and Safari add their

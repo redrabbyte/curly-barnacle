@@ -62,6 +62,8 @@ async function openGroup(page: import('@playwright/test').Page, api: Parameters<
   await signIn(page);
   await page.goto(`/g/${GROUP}`);
   await expect(page.getByPlaceholder('What was it?')).toBeVisible({ timeout: 15_000 });
+  // The form starts folded to its first line; the scan button is further down.
+  await page.getByRole('button', { name: 'Show', exact: true }).click();
 }
 
 test('a scanned receipt fills in the total, the date and the currency', async ({ page, api }) => {
@@ -110,7 +112,7 @@ test('the amount fills its line beside the unit and the scan button', async ({ p
   const amount = page.getByPlaceholder('0.00');
   const unit = page.getByRole('combobox').filter({ hasText: 'EUR' });
   const scan = page.getByRole('button', { name: /^Scan/ });
-  const row = page.locator('form').first().locator('> div').first();
+  const row = amount.locator('..');
   const widths: number[] = [];
 
   // A narrow handset, a common one, and a tablet. Checking one width is how
