@@ -24,6 +24,7 @@ import { percentPlan } from '../percentSplit';
 import { uuid } from '../uuid';
 import { AppError } from '../i18n/errors';
 import { categoryLabel } from '../i18n/categories';
+import { guessCategory } from '../i18n/categoryGuess';
 import type { MessageKey } from '../i18n';
 import { useT } from '../i18n/useT';
 
@@ -81,6 +82,16 @@ export function ExpenseEditor({ group, members, meId, existing, onDone, collapsi
   const [amountManual, setAmountManual] = useState(Boolean(existing));
   const [currency, setCurrency] = useState(existing?.currency ?? group.defaultCurrency);
   const [category, setCategory] = useState(existing?.category ?? 'other');
+  /**
+   * Whether the category is still the form's to fill in.
+   *
+   * It follows the name — "Pizza" picks food, "Rewe" picks groceries — until
+   * somebody uses the dropdown, and from then on it is theirs. An entry that
+   * already carries a category keeps it untouched; one still on the catch-all
+   * is fair game, which is what lets this reach entries a CSV import left
+   * uncategorised.
+   */
+  const [categoryPicked, setCategoryPicked] = useState((existing?.category ?? 'other') !== 'other');
   const [date, setDate] = useState(() => localDateTimeInput(existing?.expenseDate));
   const [note, setNote] = useState(existing?.note ?? '');
   const [mode, setMode] = useState<Mode>(meta?.mode ?? 'equal');
@@ -103,6 +114,13 @@ export function ExpenseEditor({ group, members, meId, existing, onDone, collapsi
       ? Object.fromEntries(meta.entries.map((e) => [e.userId, String(e.shares)]))
       : {},
   );
+
+  useEffect(() => {
+    // Back to the catch-all when the name stops saying anything: the guess is
+    // an answer to the name as it stands now, not a mark left by an earlier
+    // draft of it.
+    if (!categoryPicked) setCategory(guessCategory(description) ?? 'other');
+  }, [description, categoryPicked]);
 
   const existingPayers = existing?.splits.filter((s) => s.paidMinor > 0) ?? [];
   const [multiPayer, setMultiPayer] = useState(existingPayers.length > 1);
@@ -559,7 +577,16 @@ export function ExpenseEditor({ group, members, meId, existing, onDone, collapsi
           )}
 
           <div className="flex flex-wrap gap-2 text-sm">
-            <select className={input} value={category} onChange={(e) => setCategory(e.target.value)}>
+            <select
+              className={input}
+              value={category}
+              onChange={(e) => {
+                setCategory(e.target.value);
+                // Choosing for yourself ends the guessing, including the choice
+                // of what the guess had already put there.
+                setCategoryPicked(true);
+              }}
+            >
               {CATEGORIES.map((c) => (
                 // The value is pinned to the stored key: without it the option's
                 // text is the value, and translating the label would rewrite the

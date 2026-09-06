@@ -13,7 +13,9 @@ notifications, and a full audit trail with revert.
   member in person, or by a 128-bit capability invite link an admin approves.
 - **Expenses** — equal / exact / percentage / shares splits, multiple
   payers, notes, categories, multi-photo receipts (compressed + EXIF-stripped
-  on device).
+  on device). The category is suggested from what the entry is called — a
+  word list per category in both languages, read together and forgiving of a
+  typo — and stops suggesting the moment somebody picks one themselves.
 - **Parallel multi-currency** — balances per currency side by side; settle a
   specific currency's debt (incl. cross-currency at a frozen rate); bulk
   convert old entries at an editable ECB-suggested rate.
