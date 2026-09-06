@@ -74,8 +74,15 @@ export async function applyPaymentUpsert(
     }
   });
   if (!failure) {
-    // Generic: the amount is the thing being hidden (design §3.3).
-    notifyGroup(input.groupId, userId, 'payment.recorded', `/g/${input.groupId}?tab=balances`);
+    // Generic: the amount is the thing being hidden (design §3.3). Who the
+    // payment is between is hidden too, and is exactly what decides whether
+    // this matters to a given member — so the id goes along for the device to
+    // answer that question itself.
+    notifyGroup(input.groupId, userId, 'payment.recorded', `/g/${input.groupId}?tab=balances`, {
+      type: 'payment',
+      id: input.id,
+      groupId: input.groupId,
+    });
   }
   return failure ?? { ok: true };
 }

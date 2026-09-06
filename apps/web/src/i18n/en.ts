@@ -647,6 +647,19 @@ export const en = {
   'push.expense.deleted': '{actor} deleted an expense',
   'push.payment.recorded': '{actor} recorded a payment',
   'push.comment.added': '{actor} commented on an expense',
+
+  // The quiet lane. A push cannot be dropped — the subscription promises the
+  // browser that every one of them puts something on screen — so an event that
+  // turns out not to involve the reader says so instead, silently and folded
+  // into one line per group.
+  'push.other.expense.saved': '{actor} added or changed an expense you are not in',
+  'push.other.expense.deleted': '{actor} deleted an expense you were not in',
+  'push.other.payment.recorded': '{actor} recorded a payment between other people',
+  'push.other.comment.added': '{actor} commented on an expense you are not in',
+  'push.other.several': {
+    one: '{count} update that does not involve you',
+    other: '{count} updates that do not involve you',
+  },
   'push.member.joined': '{actor} joined the group',
   'push.member.left': '{actor} left the group',
   'push.member.removed': '{actor} removed a member',

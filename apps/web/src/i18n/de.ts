@@ -633,6 +633,15 @@ export const de: Catalogue = {
   'push.expense.deleted': '{actor} hat eine Ausgabe gelöscht',
   'push.payment.recorded': '{actor} hat eine Zahlung eingetragen',
   'push.comment.added': '{actor} hat eine Ausgabe kommentiert',
+
+  'push.other.expense.saved': '{actor} hat eine Ausgabe geändert, an der du nicht beteiligt bist',
+  'push.other.expense.deleted': '{actor} hat eine Ausgabe gelöscht, an der du nicht beteiligt warst',
+  'push.other.payment.recorded': '{actor} hat eine Zahlung zwischen anderen eingetragen',
+  'push.other.comment.added': '{actor} hat eine Ausgabe kommentiert, an der du nicht beteiligt bist',
+  'push.other.several': {
+    one: '{count} Änderung, die dich nicht betrifft',
+    other: '{count} Änderungen, die dich nicht betreffen',
+  },
   'push.member.joined': '{actor} ist der Gruppe beigetreten',
   'push.member.left': '{actor} hat die Gruppe verlassen',
   'push.member.removed': '{actor} hat jemanden entfernt',

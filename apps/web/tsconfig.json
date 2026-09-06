@@ -6,5 +6,6 @@
     "types": ["vite/client", "vite-plugin-pwa/client"]
   },
   "include": ["src", "vite.config.ts"],
+  // Checked separately against the worker lib — see tsconfig.sw.json.
   "exclude": ["src/sw.ts"]
 }

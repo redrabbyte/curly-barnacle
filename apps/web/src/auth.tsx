@@ -4,6 +4,7 @@ import { wipeLocalDb } from './db';
 import { useT } from './i18n/useT';
 import { forgetKeys } from './keys';
 import { disablePush } from './push';
+import { writeSelfPref } from './i18n/prefs';
 import { readCachedSession, writeCachedSession } from './session';
 import { SESSION_ENDED_EVENT, startSyncLoop, stopSync } from './sync';
 import type { Me } from './types';
@@ -101,6 +102,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (user) startSyncLoop(user.id);
+  }, [user]);
+
+  // A cold offline start hydrates the cached session straight into state
+  // without passing through setUser, so it is the one path that misses the
+  // mirror in writeCachedSession — and the service worker needs the id to tell
+  // a push about this user's own entries from one about strangers'. Clearing
+  // stays where signing out is: here it would only ever write the same id
+  // twice, which costs one IndexedDB put.
+  useEffect(() => {
+    if (user) void writeSelfPref(user.id);
   }, [user]);
 
   // A session the server has ended, found by whatever spoke to it first.

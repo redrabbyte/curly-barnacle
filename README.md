@@ -31,7 +31,12 @@ notifications, and a full audit trail with revert.
   copy of anything.
 - **Insight** — per-person spending, category breakdown, monthly trend
   (per currency or display-converted); CSV export.
-- **Push notifications** — Web Push on expense/payment/member events.
+- **Push notifications** — Web Push on expense/payment/member events. The
+  server cannot tell who an entry names, so it still sends every one of them to
+  the whole group; the *device* opens the entry and decides. Something you are
+  in arrives as it always did. Something you are not says so, silently, folded
+  into one line per group — never dropped, because the subscription promises the
+  browser that every push puts something on screen.
 - **English and German** — chosen in settings, guessed from the browser on
   first run, and remembered. Money and dates follow the chosen language
   rather than the browser's locale. The server sends error *codes*, never
@@ -109,6 +114,14 @@ keys sees the same digits, which is how two people confirm it by voice.
   client can write a corrupt entry into a shared group. Clients check on read
   and refuse it, and the group is told which entry and who wrote it.
 - **No server-side search, reporting or aggregation**, permanently.
+- **Notifications fan out to everybody, and are filtered on arrival.** Sending
+  only to the people an entry names would mean telling the server who they are,
+  which is the participant graph — who shares expenses with whom, and how
+  often — and worth more than the notification it would buy. So the filtering
+  is a quieter phone, not a smaller leak: every member's device is still woken
+  by every entry. Anything a device cannot settle — offline, no key for that
+  entry, not signed in, too slow — is shown in full, because a missed alert
+  about your own money is the worse failure.
 - Keys are cached unwrapped in IndexedDB, so the app works offline from a cold
   start. This protects data on the server, not on an unlocked stolen phone.
 - **The very first key a brand-new account is given is still taken on trust.**

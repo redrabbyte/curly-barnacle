@@ -1,3 +1,4 @@
+import { writeSelfPref } from './i18n/prefs';
 import type { Me } from './types';
 
 /**
@@ -14,9 +15,26 @@ import type { Me } from './types';
  */
 export const SESSION_CACHE_KEY = 'me';
 
+interface WebStorage {
+  getItem(key: string): string | null;
+  setItem(key: string, value: string): void;
+  removeItem(key: string): void;
+}
+
+/**
+ * `localStorage`, if this realm has one.
+ *
+ * It does not in a service worker, and the worker now reaches this module
+ * through the group keys — so the global is looked up rather than named. A
+ * bare `localStorage` would be a `ReferenceError` there, which is a strange
+ * way to find out that a cached session is simply not available.
+ */
+const store = (): WebStorage | null =>
+  (globalThis as { localStorage?: WebStorage }).localStorage ?? null;
+
 export function readCachedSession(): Me | null {
   try {
-    const s = localStorage.getItem(SESSION_CACHE_KEY);
+    const s = store()?.getItem(SESSION_CACHE_KEY);
     return s ? (JSON.parse(s) as Me) : null;
   } catch {
     return null;
@@ -24,8 +42,13 @@ export function readCachedSession(): Me | null {
 }
 
 export function writeCachedSession(user: Me | null): void {
-  if (user) localStorage.setItem(SESSION_CACHE_KEY, JSON.stringify(user));
-  else localStorage.removeItem(SESSION_CACHE_KEY);
+  if (user) store()?.setItem(SESSION_CACHE_KEY, JSON.stringify(user));
+  else store()?.removeItem(SESSION_CACHE_KEY);
+  // The service worker cannot see localStorage, and it needs the id to tell a
+  // push about one of this user's own entries from one about strangers'.
+  // Fire-and-forget: every reader of it treats absent as "do not know", which
+  // is the safe answer anyway.
+  void writeSelfPref(user?.id ?? null);
 }
 
 /** Who a commitment or any other account-bound blob belongs to. */

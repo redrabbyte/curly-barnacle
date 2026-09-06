@@ -52,7 +52,12 @@ export async function cacheKeys(keys: UnlockedKeys): Promise<void> {
   // The unlock prompt decides whether to block on whether keys exist, and
   // nothing else would tell it they now do — logging in does not change the
   // user identity it keys off.
-  window.dispatchEvent(new CustomEvent(KEYS_CACHED_EVENT));
+  //
+  // Unqualified rather than on `window`: this module is bundled into the
+  // service worker too, where the name does not exist. Nothing there caches
+  // keys, and nothing there is listening — but a global that only exists in
+  // one of the two realms should not be spelled out as if it existed in both.
+  dispatchEvent(new CustomEvent(KEYS_CACHED_EVENT));
 }
 
 export async function loadKeys(): Promise<UnlockedKeys | null> {

@@ -287,6 +287,6 @@ export async function wipeLocalDb(): Promise<boolean> {
 
   // The SW's receipt image cache too — Clear-Site-Data covers it server-side,
   // but wipe explicitly so nothing depends on header support.
-  if ('caches' in window) await caches.delete('receipts').catch(() => {});
+  if ('caches' in globalThis) await caches.delete('receipts').catch(() => {});
   return deleted;
 }

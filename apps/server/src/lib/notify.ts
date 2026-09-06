@@ -1,6 +1,6 @@
 import { and, eq, inArray, isNull, ne, sql } from 'drizzle-orm';
 import webpush from 'web-push';
-import type { NotificationKind, PushPayload } from '@spendapp/shared';
+import type { NotificationKind, PushEntry, PushPayload } from '@spendapp/shared';
 import { config } from '../config.js';
 import { db, schema } from '../db/index.js';
 import { isAllowedPushEndpoint } from './pushEndpoint.js';
@@ -75,6 +75,7 @@ export function notifyUsers(
   kind: NotificationKind,
   url: string,
   actor?: string,
+  entry?: PushEntry,
 ): void {
   if (!enabled || userIds.length === 0) return;
   void (async () => {
@@ -86,7 +87,7 @@ export function notifyUsers(
 
     // A kind and the names, never a sentence: the server does not know what
     // language the reader picked, and the service worker does.
-    const payload = JSON.stringify({ kind, group, actor, url } satisfies PushPayload);
+    const payload = JSON.stringify({ kind, group, actor, url, entry } satisfies PushPayload);
 
     await pool(subs, MAX_IN_FLIGHT, async (sub) => {
       /**
@@ -137,8 +138,21 @@ export function notifyUsers(
  * Fanout to every active group member except the actor. `path` defaults to the
  * group screen, but callers should pass the specific entity they are talking
  * about — a tap that lands on the wrong tab makes the alert worthless.
+ *
+ * Still everybody: this server cannot narrow the list to the people an entry
+ * actually names, because the names are inside the sealed blob and telling it
+ * would hand it the participant graph — who shares expenses with whom — which
+ * is worth more than the notification it would buy. `entry` is how the
+ * *device* narrows it instead: it can open the entry, so it decides whether
+ * this is worth a sound (design §3.3).
  */
-export function notifyGroup(groupId: string, actorId: string, kind: NotificationKind, path?: string): void {
+export function notifyGroup(
+  groupId: string,
+  actorId: string,
+  kind: NotificationKind,
+  path?: string,
+  entry?: PushEntry,
+): void {
   if (!enabled) return;
   void (async () => {
     const groupRows = await db
@@ -167,6 +181,6 @@ export function notifyGroup(groupId: string, actorId: string, kind: Notification
       );
     if (members.length === 0) return;
 
-    notifyUsers(members.map((m) => m.userId), group.name, kind, path ?? `/g/${groupId}`, actorName);
+    notifyUsers(members.map((m) => m.userId), group.name, kind, path ?? `/g/${groupId}`, actorName, entry);
   })().catch(() => {});
 }

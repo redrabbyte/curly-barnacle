@@ -83,8 +83,14 @@ export async function applyExpenseUpsert(
   });
   if (!failure) {
     // Generic on purpose: composing the description and amount would put the
-    // very content this hides into a push payload (design §3.3).
-    notifyGroup(input.groupId, userId, 'expense.saved', `/g/${input.groupId}/e/${input.id}`);
+    // very content this hides into a push payload (design §3.3). The id is not
+    // content — it names the row the device should open to find out whether
+    // this is one of its own.
+    notifyGroup(input.groupId, userId, 'expense.saved', `/g/${input.groupId}/e/${input.id}`, {
+      type: 'expense',
+      id: input.id,
+      groupId: input.groupId,
+    });
   }
   return failure ?? { ok: true };
 }
@@ -126,7 +132,16 @@ export async function applyExpenseDelete(
       await tx.insert(schema.processedMutations).values({ mutationId, userId, createdAt: now });
     }
   });
-  if (!expense.deletedAt) notifyGroup(expense.groupId, userId, 'expense.deleted');
+  // No path: the entry it names is gone, so the group screen is where a tap
+  // belongs. The id still travels, because a device that has not synced the
+  // delete yet can look the expense up and see whether it was ever theirs.
+  if (!expense.deletedAt) {
+    notifyGroup(expense.groupId, userId, 'expense.deleted', undefined, {
+      type: 'expense',
+      id: expenseId,
+      groupId: expense.groupId,
+    });
+  }
   return { ok: true }; // deleting twice is not an error
 }
 

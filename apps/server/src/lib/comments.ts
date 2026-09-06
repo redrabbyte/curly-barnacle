@@ -44,6 +44,12 @@ export async function applyCommentCreate(
       await tx.insert(schema.processedMutations).values({ mutationId, userId, createdAt: now });
     }
   });
-  notifyGroup(input.groupId, userId, 'comment.added', `/g/${input.groupId}/e/${input.expenseId}`);
+  // A comment inherits the expense it is on: somebody talking about an entry
+  // you are not in is no more yours than the entry was.
+  notifyGroup(input.groupId, userId, 'comment.added', `/g/${input.groupId}/e/${input.expenseId}`, {
+    type: 'expense',
+    id: input.expenseId,
+    groupId: input.groupId,
+  });
   return { ok: true };
 }

@@ -1,16 +1,20 @@
 /// <reference lib="webworker" />
-// Custom service worker (injectManifest). Excluded from the app tsconfig —
-// it is type-checked against the webworker lib and bundled by vite-plugin-pwa.
+// Custom service worker (injectManifest). Excluded from the app tsconfig and
+// checked by `tsconfig.sw.json` instead, which gives it the webworker lib in
+// place of the DOM; `pnpm typecheck` runs both. Bundled by vite-plugin-pwa,
+// which does no type checking of its own — so without that second pass the
+// only thing standing between this file and production is esbuild.
 declare const self: ServiceWorkerGlobalScope;
 
-import { isNotificationKind, type PushPayload } from '@spendapp/shared';
+import { isNotificationKind, type NotificationKind, type PushPayload } from '@spendapp/shared';
 import { safeNavTarget } from './navSafety';
 import { ExpirationPlugin } from 'workbox-expiration';
 import { createHandlerBoundToURL, precacheAndRoute } from 'workbox-precaching';
 import { NavigationRoute, registerRoute } from 'workbox-routing';
 import { CacheFirst } from 'workbox-strategies';
-import { isLanguage, translate, type Language } from './i18n';
+import { isLanguage, translate, type Language, type MessageKey } from './i18n';
 import { readLanguagePref } from './i18n/prefs';
+import { involvementWithin } from './pushFilter';
 
 precacheAndRoute(self.__WB_MANIFEST);
 
@@ -46,6 +50,35 @@ async function readerLanguage(): Promise<Language> {
   return isLanguage(base) ? base : 'en';
 }
 
+/**
+ * What an event that turns out not to involve the reader says instead.
+ *
+ * Only the kinds that name an entry are in here. A member joining or an admin
+ * removing somebody concerns everyone who is sent it, and `you.*` is about the
+ * reader by definition — none of those has a quiet form, and none is filtered.
+ */
+const QUIET_BODY = {
+  'expense.saved': 'push.other.expense.saved',
+  'expense.deleted': 'push.other.expense.deleted',
+  'payment.recorded': 'push.other.payment.recorded',
+  'comment.added': 'push.other.comment.added',
+} as const satisfies Partial<Record<NotificationKind, MessageKey>>;
+
+/** How many quiet events this line is already standing in for. */
+const quietCountOf = (n: Notification): number => {
+  const count = (n.data as { quietCount?: unknown } | undefined)?.quietCount;
+  return typeof count === 'number' && count > 0 ? count : 1;
+};
+
+/** The quiet wording for a kind, or null for a kind that never goes quiet. */
+const quietBodyFor = (kind: NotificationKind): MessageKey | null =>
+  Object.hasOwn(QUIET_BODY, kind) ? QUIET_BODY[kind as keyof typeof QUIET_BODY] : null;
+
+/** Keep any open tab fresh, so focusing the app does not show stale numbers. */
+async function nudgeClientsToSync(): Promise<void> {
+  for (const c of await self.clients.matchAll({ type: 'window' })) c.postMessage({ type: 'sync' });
+}
+
 self.addEventListener('push', (event) => {
   if (!event.data) return;
   let payload: Partial<PushPayload> = {};
@@ -60,8 +93,44 @@ self.addEventListener('push', (event) => {
       // whatever language this device is set to. It cannot compose the sentence
       // itself — it has no idea who is reading.
       const language = await readerLanguage();
-      const body = isNotificationKind(payload.kind)
-        ? translate(language, `push.${payload.kind}`, { actor: payload.actor ?? '', group: payload.group ?? '' })
+      const kind = isNotificationKind(payload.kind) ? payload.kind : null;
+
+      // The subscription was made `userVisibleOnly`, which is a promise to the
+      // browser that every push puts something on screen. Break it and the
+      // browser draws its own "this site was updated in the background" — and
+      // keeps a tally that eventually costs the permission. So an event about
+      // somebody else's expense is never dropped; it is answered quietly, in
+      // one line per group that the next one replaces rather than stacks.
+      const entry = payload.entry;
+      const quietBody = kind ? quietBodyFor(kind) : null;
+      const quiet = entry && quietBody ? (await involvementWithin(entry)) === 'theirs' : false;
+
+      if (quiet && entry && quietBody) {
+        const tag = `quiet:${entry.groupId}`;
+        const existing = await self.registration.getNotifications({ tag });
+        const count = existing.reduce((n, e) => n + quietCountOf(e), 0) + 1;
+        await self.registration.showNotification(payload.group ?? 'SpendApp', {
+          body:
+            count > 1
+              ? translate(language, 'push.other.several', { count })
+              : translate(language, quietBody, { actor: payload.actor ?? '', group: payload.group ?? '' }),
+          icon: '/icon-192.png',
+          badge: '/badge-96.png',
+          // No sound, no buzz — the whole point — and one line per group, so a
+          // busy evening in a group the reader is not part of stays one line
+          // rather than a column of them.
+          silent: true,
+          tag,
+          // Once it stands for more than one thing, the entry it happened to
+          // arrive for is the wrong place to land; the group is not.
+          data: { url: `/g/${entry.groupId}`, quietCount: count },
+        });
+        await nudgeClientsToSync();
+        return;
+      }
+
+      const body = kind
+        ? translate(language, `push.${kind}`, { actor: payload.actor ?? '', group: payload.group ?? '' })
         : '';
       await self.registration.showNotification(payload.group ?? 'SpendApp', {
         body,
@@ -82,9 +151,7 @@ self.addEventListener('push', (event) => {
         badge: '/badge-96.png',
         data: { url: payload.url ?? '/' },
       });
-      // Nudge any open tab to sync so the app is fresh when focused.
-      const clients = await self.clients.matchAll({ type: 'window' });
-      for (const c of clients) c.postMessage({ type: 'sync' });
+      await nudgeClientsToSync();
     })(),
   );
 });
