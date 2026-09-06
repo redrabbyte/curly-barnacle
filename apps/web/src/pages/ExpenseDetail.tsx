@@ -48,6 +48,21 @@ export function ExpenseDetailPage() {
     () => (groupId ? localDb.activity.where('groupId').equals(groupId).toArray() : []),
     [groupId],
   );
+  /**
+   * This expense's photos, for the history below — deleted ones included.
+   *
+   * An `attachment.removed` row carries an empty payload, so the only thing
+   * tying one to an expense is the attachment itself. Reading them here rather
+   * than teaching the log to query means the row stays a row.
+   */
+  const attachments = useLiveQuery(
+    () => (expenseId ? localDb.attachments.where('expenseId').equals(expenseId).toArray() : []),
+    [expenseId],
+  );
+  const attachmentIds = useMemo(
+    () => new Set((attachments ?? []).map((a) => a.id)),
+    [attachments],
+  );
 
   const resolve = useMemo(() => aliasResolver(members ?? []), [members]);
   // Usually right — leaving does not settle what you owe — but sometimes a
@@ -275,7 +290,13 @@ export function ExpenseDetailPage() {
 
       <section>
         <h2 className="mb-1 text-sm font-medium text-slate-500 dark:text-slate-400">{t('expense.history')}</h2>
-        <VersionLog activity={activity} expense={expense} meId={user.id} nameOf={nameOf} />
+        <VersionLog
+          activity={activity}
+          expense={expense}
+          attachmentIds={attachmentIds}
+          meId={user.id}
+          nameOf={nameOf}
+        />
       </section>
     </div>
   );

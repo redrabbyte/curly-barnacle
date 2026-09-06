@@ -1092,6 +1092,22 @@ export async function installApi(context: BrowserContext, state: ApiState): Prom
             deletedAt: null,
           });
           state.attachments.set(m.groupId, list);
+          // And the activity row the server writes alongside it. Unlike a
+          // comment, nothing writes one of these optimistically — the client
+          // queues the attachment and waits — so without this the expense's
+          // history never learns that a photo was added, and a test of that
+          // fails against the mock rather than against the app.
+          state.activity.push({
+            id: randomUUID(),
+            groupId: m.groupId,
+            version: bump(state, m.groupId),
+            actorId: ME.id,
+            type: 'attachment.added',
+            entityType: 'attachment',
+            entityId: m.data.id,
+            payload: { expenseId: m.data.expenseId },
+            createdAt: new Date().toISOString(),
+          });
         }
         if (m.type === 'import.record') {
           state.activity.push({

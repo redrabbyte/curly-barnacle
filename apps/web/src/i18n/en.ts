@@ -435,6 +435,29 @@ export const en = {
   'activity.import.csv': 'a CSV',
   'activity.import.reverted': 'reverted an import',
 
+  // What an edit actually did. Sub-lines under the version they belong to, so
+  // they are fragments rather than sentences — the actor and the verb are
+  // already on the row above.
+  'activity.comment': 'commented',
+  'activity.attachment.added': 'added a photo',
+  'activity.attachment.removed': 'removed a photo',
+  'activity.attachment.restored': 'put a photo back',
+  'change.description': 'renamed from “{from}” to “{to}”',
+  'change.amount': 'amount {from} → {to}',
+  'change.category': 'category {from} → {to}',
+  'change.date': 'dated {from} → {to}',
+  'change.note.added': 'added a note',
+  'change.note.changed': 'changed the note',
+  'change.note.removed': 'removed the note',
+  'change.splitMode': 'split {from} → {to}',
+  'change.whoPays.added': 'added {names} to the split',
+  'change.whoPays.removed': 'took {names} off the split',
+  'change.shares': 'changed who owes what',
+  'split.equal': 'equally',
+  'split.exact': 'by exact amounts',
+  'split.percent': 'by percentage',
+  'split.shares': 'by shares',
+
   // --- CSV import ----------------------------------------------------------
   'import.title': 'Import from CSV',
   'import.close': 'Close',

@@ -7,11 +7,14 @@ import type {
   UpsertPayment,
 } from '@spendapp/shared';
 import { openSnapshot } from '../envelope';
+import { diffExpense, type ExpenseChange } from '../expenseDiff';
 import { restoreExpenseLocal, restorePaymentLocal } from '../sync';
 import { revertImport } from '../import';
 import type { Translator } from '../i18n';
 import { useLocale, useT } from '../i18n/useT';
 import { useMoney, type MoneyFormatter } from '../i18n/useMoney';
+import { categoryLabel } from '../i18n/categories';
+import { formatExpenseDate, useSettings } from '../settings';
 
 interface ImportPayload {
   source?: string;
@@ -61,6 +64,22 @@ function useSnapshots(activity: ActivityDto[]): Map<string, AnySnapshot> {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activity, snapshotCache.size]);
 }
+
+/**
+ * Newest first, with anything not yet synced at the top.
+ *
+ * The server assigns the version, so a row written on this device carries 0
+ * until it comes back — and ordering on that alone filed a comment somebody
+ * had just posted underneath the day the expense was created. `createdAt`
+ * breaks ties, which is what orders two rows from the same sync.
+ */
+const newestFirst = (a: ActivityDto, b: ActivityDto): number =>
+  (b.version || Number.MAX_SAFE_INTEGER) - (a.version || Number.MAX_SAFE_INTEGER) ||
+  (a.createdAt < b.createdAt ? 1 : -1);
+
+/** A row that is a version of an entity, rather than a comment or a photo. */
+const isEntityVersion = (a: ActivityDto): boolean =>
+  a.type.startsWith('expense.') || a.type.startsWith('payment.');
 
 /** Latest known snapshot of an entity, for restoring past a delete. */
 function latestSnapshot(
@@ -117,6 +136,16 @@ function describe(t: Translator, money: MoneyFormatter, a: ActivityDto, snapshot
     }
     case 'import.reverted':
       return t('activity.import.reverted');
+    // These three reached the fallback below and rendered their own type
+    // string — a log line reading `attachment.added`, in either language.
+    case 'comment':
+      return t('activity.comment');
+    case 'attachment.added':
+      return t('activity.attachment.added');
+    case 'attachment.removed':
+      return t('activity.attachment.removed');
+    case 'attachment.restored':
+      return t('activity.attachment.restored');
     default:
       return a.type;
   }
@@ -141,18 +170,18 @@ export function ActivityTab({ activity, expenses, payments, meId, groupId, nameO
     () => new Set(activity.filter((a) => a.type === 'import.reverted').map((a) => a.entityId)),
     [activity],
   );
-  const sorted = useMemo(
-    () => activity.slice().sort((a, b) => b.version - a.version).slice(0, 100),
-    [activity],
-  );
+  const sorted = useMemo(() => activity.slice().sort(newestFirst).slice(0, 100), [activity]);
   const expenseById = useMemo(() => new Map(expenses.map((e) => [e.id, e])), [expenses]);
   const paymentById = useMemo(() => new Map(payments.map((p) => [p.id, p])), [payments]);
   // The newest logged version of each entity: everything below it is something
   // you could go back to, and it is the one thing you cannot "revert" to.
   const newestVersionOf = useMemo(() => {
     const out = new Map<string, string>();
-    for (const a of [...activity].sort((x, y) => x.version - y.version)) {
-      if (a.entityType === 'expense' || a.entityType === 'payment') out.set(a.entityId, a.id);
+    // Versions only. A comment is logged against the expense it is on, so
+    // counting it here made the newest *edit* look superseded the moment
+    // somebody commented — and offered a "revert to this" that went nowhere.
+    for (const a of [...activity].filter(isEntityVersion).sort((x, y) => x.version - y.version)) {
+      out.set(a.entityId, a.id);
     }
     return out;
   }, [activity]);
@@ -229,53 +258,178 @@ export function ActivityTab({ activity, expenses, payments, meId, groupId, nameO
   );
 }
 
-/** Per-expense version log with revert (design §11). */
+/**
+ * One change, in words. Returns a list because a single edit to the split can
+ * both add and remove somebody, and those are two things to say.
+ */
+function changeLines(
+  t: Translator,
+  money: MoneyFormatter,
+  nameOf: (id: string) => string,
+  date: (iso: string) => string,
+  c: ExpenseChange,
+): string[] {
+  switch (c.field) {
+    case 'description':
+      return [t('change.description', { from: c.from, to: c.to })];
+    case 'amount':
+      return [
+        t('change.amount', {
+          from: money(c.from.amountMinor, c.from.currency),
+          to: money(c.to.amountMinor, c.to.currency),
+        }),
+      ];
+    case 'category':
+      return [t('change.category', { from: categoryLabel(t, c.from), to: categoryLabel(t, c.to) })];
+    case 'date':
+      return [t('change.date', { from: date(c.from), to: date(c.to) })];
+    case 'note':
+      return [t(`change.note.${c.kind}`)];
+    case 'splitMode':
+      return [t('change.splitMode', { from: t(`split.${c.from}`), to: t(`split.${c.to}`) })];
+    case 'whoPays':
+      return [
+        ...(c.added.length > 0
+          ? [t('change.whoPays.added', { names: c.added.map(nameOf).join(', ') })]
+          : []),
+        ...(c.removed.length > 0
+          ? [t('change.whoPays.removed', { names: c.removed.map(nameOf).join(', ') })]
+          : []),
+      ];
+    case 'shares':
+      return [t('change.shares')];
+  }
+}
+
+function ChangeList({
+  changes,
+  nameOf,
+}: {
+  changes: ExpenseChange[];
+  nameOf: (id: string) => string;
+}) {
+  const t = useT();
+  const money = useMoney();
+  const {
+    settings: { displayTz, language },
+  } = useSettings();
+  const lines = useMemo(
+    () =>
+      changes.flatMap((c) =>
+        changeLines(t, money, nameOf, (iso) => formatExpenseDate(iso, displayTz, language), c),
+      ),
+    [changes, t, money, nameOf, displayTz, language],
+  );
+  if (lines.length === 0) return null;
+  return (
+    <ul className="mt-0.5 flex flex-col gap-0.5 pl-3 text-xs text-slate-500 dark:text-slate-400">
+      {/* Index keys: the list is derived fresh per row and never reorders. */}
+      {lines.map((line, i) => (
+        <li key={i}>{line}</li>
+      ))}
+    </ul>
+  );
+}
+
+/**
+ * Per-expense version log with revert (design §11).
+ *
+ * Shows what each edit *did*, not only that there was one. Every write seals a
+ * snapshot of the version it creates, so an edit is described by comparing its
+ * snapshot with the one before it — no extra storage, and nothing the server
+ * can read either way.
+ *
+ * Comments and photos belong here too. Comment rows were already being caught
+ * by the filter (they are logged against the expense) and rendered as the bare
+ * word `comment`, having no case in `describe`; attachment rows were logged
+ * against the attachment and so were missing altogether. A history of an
+ * expense that omits somebody attaching the receipt is not its history.
+ */
 export function VersionLog({
   activity,
   expense,
+  attachmentIds,
   meId,
   nameOf,
 }: {
   activity: ActivityDto[];
   expense: ExpenseDto;
+  /** The expense's photos, live or deleted — the log rows only name the photo. */
+  attachmentIds: Set<string>;
   meId: string;
   nameOf: (id: string) => string;
 }) {
   const t = useT();
   const locale = useLocale();
   const money = useMoney();
-  const snapshots = useSnapshots(activity);
-  const versions = useMemo(
+  const rows = useMemo(
     () =>
       activity
-        .filter((a) => a.entityType === 'expense' && a.entityId === expense.id)
-        .sort((a, b) => b.version - a.version),
-    [activity, expense.id],
+        .filter(
+          (a) =>
+            (a.entityType === 'expense' && a.entityId === expense.id) ||
+            (a.entityType === 'attachment' && attachmentIds.has(a.entityId)),
+        )
+        .sort(newestFirst),
+    [activity, expense.id, attachmentIds],
   );
-  if (versions.length === 0)
+  const snapshots = useSnapshots(rows);
+
+  // The versions of the expense itself, newest first. Comments and photos sit
+  // between them in the list but are not versions of anything: they carry no
+  // snapshot, cannot be reverted to, and must not be what an edit is compared
+  // against.
+  const versions = useMemo(() => rows.filter((a) => a.type.startsWith('expense.')), [rows]);
+  const newestVersionId = versions[0]?.id;
+  const previousOf = useMemo(() => {
+    const out = new Map<string, string>();
+    versions.forEach((a, i) => {
+      const older = versions[i + 1];
+      if (older) out.set(a.id, older.id);
+    });
+    return out;
+  }, [versions]);
+
+  if (rows.length === 0)
     return <p className="text-sm text-slate-500 dark:text-slate-400">{t('activity.noHistory')}</p>;
 
   return (
     <ul className="flex flex-col gap-1 text-sm">
-      {versions.map((a, i) => {
+      {rows.map((a) => {
         const snap = snapshots.get(a.id);
+        const isVersion = a.type.startsWith('expense.');
+        // Both ends have to open before an edit can be described. A version
+        // written before snapshots existed, or under an epoch this device was
+        // never given, leaves the row saying only that it was edited — which
+        // is what every row said before.
+        const olderId = previousOf.get(a.id);
+        const older = olderId ? snapshots.get(olderId) : undefined;
+        const changes =
+          snap && older && isExpenseSnapshot(snap) && isExpenseSnapshot(older)
+            ? diffExpense(older, snap)
+            : [];
         return (
-          <li key={a.id} className="flex items-center justify-between gap-2">
-            <span>
-              <span className="font-medium">{nameOf(a.actorId)}</span> {describe(t, money, a, snap)}
-              {i === 0 && <span className="ml-1 text-xs text-slate-400">{t('activity.current')}</span>}
+          <li key={a.id} className="flex flex-col">
+            <span className="flex items-start justify-between gap-2">
+              <span className="min-w-0">
+                <span className="font-medium">{nameOf(a.actorId)}</span> {describe(t, money, a, snap)}
+                {a.id === newestVersionId && (
+                  <span className="ml-1 text-xs text-slate-400">{t('activity.current')}</span>
+                )}
+              </span>
+              <span className="flex shrink-0 items-center gap-2 whitespace-nowrap text-slate-400">
+                {isVersion && a.id !== newestVersionId && snap && isExpenseSnapshot(snap) && (
+                  <button
+                    className="text-teal-700 dark:text-teal-300 underline"
+                    onClick={() => void restoreExpenseLocal(snap, meId)}
+                  >
+                    {t('activity.revertTo')}
+                  </button>
+                )}
+                {new Date(a.createdAt).toLocaleString(locale, { dateStyle: 'short', timeStyle: 'short' })}
+              </span>
             </span>
-            <span className="flex items-center gap-2 whitespace-nowrap text-slate-400">
-              {i > 0 && snap && isExpenseSnapshot(snap) && (
-                <button
-                  className="text-teal-700 dark:text-teal-300 underline"
-                  onClick={() => void restoreExpenseLocal(snap, meId)}
-                >
-                  {t('activity.revertTo')}
-                </button>
-              )}
-              {new Date(a.createdAt).toLocaleString(locale, { dateStyle: 'short', timeStyle: 'short' })}
-            </span>
+            <ChangeList changes={changes} nameOf={nameOf} />
           </li>
         );
       })}
