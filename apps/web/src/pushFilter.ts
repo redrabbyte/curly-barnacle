@@ -131,10 +131,19 @@ async function resolverFor(groupId: string): Promise<(userId: string) => string>
 }
 
 /**
- * The entry, if this device already holds it.
+ * The entry as this device already holds it.
  *
- * The cheap half, and the one that answers an edit, a delete or a comment on
- * something already synced without touching the network at all.
+ * Only ever consulted when the pull below came back without it, which is the
+ * one circumstance that makes the mirror trustworthy: the entry is not in the
+ * delta because this device's cursor is already past it, so the sync that
+ * advanced the cursor wrote the same version the push is about.
+ *
+ * Asking it *first* is what the filter did to begin with, and it was wrong in
+ * the case that matters most. A push announces a change; the local copy is
+ * therefore the version from before that change, by definition. An expense
+ * edited to add somebody was still being read as the expense that left them
+ * out — so the person who had just been included went on being told, quietly,
+ * that it was nothing to do with them.
  */
 async function fromMirror(entry: PushEntry): Promise<ExpenseDto | PaymentDto | undefined> {
   return entry.type === 'expense'
@@ -143,11 +152,17 @@ async function fromMirror(entry: PushEntry): Promise<ExpenseDto | PaymentDto | u
 }
 
 /**
- * The entry, pulled and opened in memory.
+ * The entry, pulled and opened in memory. The authority, and asked first.
  *
- * A push about a *new* entry always lands ahead of the sync that would bring
- * it, so without this the filter would answer `unknown` for the one case it
- * exists to handle.
+ * A push about a new entry always lands ahead of the sync that would bring it,
+ * and a push about a changed one describes a version the mirror does not have
+ * yet. Both are the same problem: at the moment a push arrives, what is on the
+ * device is the past. Only the pull can say who is in an entry *now*.
+ *
+ * That the app may be closed is exactly why this cannot be left to the mirror.
+ * Nothing here writes, so the mirror is never advanced by a notification —
+ * with no tab open it stays at whatever the last visit left, and every push
+ * about that entry would be decided from it, forever.
  *
  * Nothing is written. Applying the delta here would mean reimplementing the
  * whole of `syncNow` — grants before keys, commitments before wraps, coverage,
@@ -189,6 +204,42 @@ async function fromServer(entry: PushEntry): Promise<ExpenseDto | PaymentDto | n
   return wire ? openPayment(wire) : null;
 }
 
+/**
+ * The decision, given both versions of the entry that could be had.
+ *
+ * `pulled` wins whenever there is one. A push announces a change, so the copy
+ * already on the device is the version from *before* that change — reading it
+ * first, which is what this did to begin with, meant an expense edited to add
+ * somebody was judged by the splits that left them out, and the person newly
+ * included went on being told quietly that it was nothing to do with them.
+ *
+ * `mirrored` is not a worse answer, only an older one, and it is right in the
+ * single case it is reached: the entry was absent from the delta because this
+ * device's cursor is already past it, so what the mirror holds *is* the
+ * version the push is about.
+ *
+ * Neither is `unknown`, never `theirs`: not knowing, and knowing it belongs to
+ * somebody else, would otherwise sound exactly the same.
+ *
+ * Separated from the fetching so the rule can be tested without a database and
+ * a network behind it.
+ */
+export function involvementFrom(
+  entry: PushEntry,
+  pulled: ExpenseDto | PaymentDto | null,
+  mirrored: ExpenseDto | PaymentDto | undefined,
+  me: string,
+  resolve: (userId: string) => string,
+): Involvement {
+  const held = pulled ?? mirrored;
+  if (!held) return 'unknown';
+  const names =
+    entry.type === 'expense'
+      ? expenseNamesMe(held as ExpenseDto, me, resolve)
+      : paymentNamesMe(held as PaymentDto, me, resolve);
+  return names ? 'mine' : 'theirs';
+}
+
 /** The decision, with every uncertain path collapsing onto `unknown`. */
 export async function involvementOf(entry: PushEntry): Promise<Involvement> {
   try {
@@ -196,16 +247,15 @@ export async function involvementOf(entry: PushEntry): Promise<Involvement> {
     const me = await readerId();
     if (!me) return 'unknown';
     const resolve = await resolverFor(entry.groupId);
-    const mine = resolve(me);
 
-    const held = (await fromMirror(entry)) ?? (await fromServer(entry));
-    if (!held) return 'unknown';
-
-    const names =
-      entry.type === 'expense'
-        ? expenseNamesMe(held as ExpenseDto, mine, resolve)
-        : paymentNamesMe(held as PaymentDto, mine, resolve);
-    return names ? 'mine' : 'theirs';
+    // Both are fetched and `involvementFrom` picks, so which one wins is
+    // stated in exactly one place. A pull that *fails* throws instead of
+    // returning null, and the catch below turns that into `unknown` — falling
+    // back to the mirror there would mean answering from a copy of unknown age
+    // without being able to tell.
+    const pulled = await fromServer(entry);
+    const mirrored = await fromMirror(entry);
+    return involvementFrom(entry, pulled, mirrored, resolve(me), resolve);
   } catch {
     // Offline, signed out, a key this device was never given, a server that
     // said no. None of them are reasons to stay quiet about somebody's money.
