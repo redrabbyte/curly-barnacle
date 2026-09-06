@@ -207,16 +207,27 @@ async function fromServer(entry: PushEntry): Promise<ExpenseDto | PaymentDto | n
 /**
  * The decision, given both versions of the entry that could be had.
  *
- * `pulled` wins whenever there is one. A push announces a change, so the copy
- * already on the device is the version from *before* that change — reading it
- * first, which is what this did to begin with, meant an expense edited to add
- * somebody was judged by the splits that left them out, and the person newly
- * included went on being told quietly that it was nothing to do with them.
+ * Named in *either* one is loud. The two versions straddle the change the push
+ * is announcing — `pulled` is the entry as it is now, `mirrored` the entry as
+ * this device last saw it — and a change that moves somebody across that line
+ * in either direction is a change to what they owe.
  *
- * `mirrored` is not a worse answer, only an older one, and it is right in the
- * single case it is reached: the entry was absent from the delta because this
- * device's cursor is already past it, so what the mirror holds *is* the
- * version the push is about.
+ * Being taken off an expense is the half that is easy to get wrong, and this
+ * did get it wrong: judging by `pulled` alone, somebody removed from an entry
+ * is no longer named in it, so the notification that their share had just
+ * disappeared arrived silently, wording and all, as though it were a stranger's
+ * expense. Their balance had moved. That is the opposite of nothing to do with
+ * them, and it is the last notification they would want quiet.
+ *
+ * Reading `mirrored` first was the original bug in the other direction: a push
+ * announces a change, so the copy already on the device is the version from
+ * before it, and an expense edited to *add* somebody was judged by the splits
+ * that left them out. Consulting both settles both.
+ *
+ * `mirrored` alone decides when the pull found nothing, which is the case that
+ * makes it trustworthy on its own: the entry was absent from the delta because
+ * this device's cursor is already past it, so what it holds is the version the
+ * push is about.
  *
  * Neither is `unknown`, never `theirs`: not knowing, and knowing it belongs to
  * somebody else, would otherwise sound exactly the same.
@@ -231,13 +242,14 @@ export function involvementFrom(
   me: string,
   resolve: (userId: string) => string,
 ): Involvement {
-  const held = pulled ?? mirrored;
-  if (!held) return 'unknown';
-  const names =
+  if (!pulled && !mirrored) return 'unknown';
+  const names = (held: ExpenseDto | PaymentDto): boolean =>
     entry.type === 'expense'
       ? expenseNamesMe(held as ExpenseDto, me, resolve)
       : paymentNamesMe(held as PaymentDto, me, resolve);
-  return names ? 'mine' : 'theirs';
+  if (pulled && names(pulled)) return 'mine';
+  if (mirrored && names(mirrored)) return 'mine';
+  return 'theirs';
 }
 
 /** The decision, with every uncertain path collapsing onto `unknown`. */
@@ -248,11 +260,12 @@ export async function involvementOf(entry: PushEntry): Promise<Involvement> {
     if (!me) return 'unknown';
     const resolve = await resolverFor(entry.groupId);
 
-    // Both are fetched and `involvementFrom` picks, so which one wins is
-    // stated in exactly one place. A pull that *fails* throws instead of
-    // returning null, and the catch below turns that into `unknown` — falling
-    // back to the mirror there would mean answering from a copy of unknown age
-    // without being able to tell.
+    // Both are fetched, because both are needed: they are the entry either
+    // side of the change being announced, and `involvementFrom` wants to see
+    // the reader cross that line in either direction. A pull that *fails*
+    // throws instead of returning null, and the catch below turns that into
+    // `unknown` — treating a copy of unknown age as the current one would mean
+    // answering without being able to tell.
     const pulled = await fromServer(entry);
     const mirrored = await fromMirror(entry);
     return involvementFrom(entry, pulled, mirrored, resolve(me), resolve);

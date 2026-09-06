@@ -118,10 +118,33 @@ describe('which version of the entry is judged', () => {
     expect(involvementFrom(ENTRY, afterTheEdit, beforeTheEdit, 'a', plain)).toBe('mine');
   });
 
-  /** And the other direction: taken off an entry, it goes quiet again. */
-  it('judges a removal by the pulled version too', () => {
+  /**
+   * And the other direction, which is the one it is tempting to get wrong.
+   *
+   * Removed from an expense, you are not named in the version that arrives —
+   * so judging by that alone made "your share of this just vanished" the
+   * quietest thing the app can say, in the wording reserved for strangers'
+   * expenses. A balance moved. Being taken off is a change *to* somebody, not
+   * a change that stopped concerning them.
+   */
+  it('is loud when the edit is the reader being taken off', () => {
     const beforeTheEdit = expense('b', split('b', 500, 0), split('a', 0, 250));
     const afterTheEdit = expense('b', split('b', 500, 0));
+    expect(involvementFrom(ENTRY, afterTheEdit, beforeTheEdit, 'a', plain)).toBe('mine');
+  });
+
+  /** The same for a payment edited so the reader is no longer one of its ends. */
+  it('is loud when a payment stops being between the reader and anybody', () => {
+    const entry = { type: 'payment', id: 'p1', groupId: 'g1' } as const;
+    expect(involvementFrom(entry, payment('b', 'b', 'c'), payment('b', 'b', 'a'), 'a', plain)).toBe(
+      'mine',
+    );
+  });
+
+  /** Never in it and still not in it stays quiet — both sides have to be no. */
+  it('stays quiet when neither version names the reader', () => {
+    const beforeTheEdit = expense('b', split('b', 500, 0));
+    const afterTheEdit = expense('b', split('b', 300, 0), split('c', 0, 200));
     expect(involvementFrom(ENTRY, afterTheEdit, beforeTheEdit, 'a', plain)).toBe('theirs');
   });
 

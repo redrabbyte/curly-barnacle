@@ -34,9 +34,11 @@ notifications, and a full audit trail with revert.
 - **Push notifications** — Web Push on expense/payment/member events. The
   server cannot tell who an entry names, so it still sends every one of them to
   the whole group; the *device* opens the entry and decides. Something you are
-  in arrives as it always did. Something you are not says so, silently, folded
-  into one line per group — never dropped, because the subscription promises the
-  browser that every push puts something on screen.
+  in arrives as it always did — including being *taken off* one, which moves
+  your balance and is judged against the entry either side of the change, not
+  only as it ended up. Something you are in neither version of says so,
+  silently, folded into one line per group — never dropped, because the
+  subscription promises the browser that every push puts something on screen.
 - **English and German** — chosen in settings, guessed from the browser on
   first run, and remembered. Money and dates follow the chosen language
   rather than the browser's locale. The server sends error *codes*, never
