@@ -3,6 +3,7 @@ import { Link, Navigate, Route, Routes, useLocation, useNavigate } from 'react-r
 import { localPath } from './navSafety';
 import { useAuth } from './auth';
 import { InstallPrompt } from './components/InstallPrompt';
+import { InviteBell } from './components/InviteBell';
 import { NotificationPrompt } from './components/NotificationPrompt';
 import { SettingsModal } from './components/SettingsModal';
 import { SiteFooter } from './components/SiteFooter';
@@ -129,6 +130,7 @@ export function App() {
         {user && (
           <div className="flex flex-col items-end gap-1 text-sm">
             <div className="flex items-center gap-3">
+              <InviteBell meId={user.id} />
               <span className="text-slate-600 dark:text-slate-300">{user.displayName}</span>
               <button
                 onClick={() => setSettingsOpen(true)}

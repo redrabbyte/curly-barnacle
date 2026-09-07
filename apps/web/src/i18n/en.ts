@@ -327,6 +327,13 @@ export const en = {
   'shell.offline': 'offline — changes will sync later',
   'shell.build': 'build {date} UTC',
   'shell.installAsApp': 'Install as an app',
+  // The bell in the top bar. Same words as the members tab's own heading, so
+  // the count you tapped is the count you land on.
+  'shell.waitingToJoin': {
+    one: '{count} person waiting for approval',
+    other: '{count} people waiting for approval',
+  },
+  'shell.closeList': 'Close',
 
   'footer.copyright': '© {year} {owner}',
 

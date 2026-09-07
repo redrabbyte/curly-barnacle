@@ -314,6 +314,11 @@ export const de: Catalogue = {
   'shell.offline': 'offline — Änderungen werden später synchronisiert',
   'shell.build': 'Build {date} UTC',
   'shell.installAsApp': 'Als App installieren',
+  'shell.waitingToJoin': {
+    one: '{count} Person wartet auf Bestätigung',
+    other: '{count} Personen warten auf Bestätigung',
+  },
+  'shell.closeList': 'Schließen',
 
   'footer.copyright': '© {year} {owner}',
 

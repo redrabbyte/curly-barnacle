@@ -7,6 +7,7 @@ import { claimScope, entriesNaming, mergeEntries, nameLooksDifferent, type Claim
 import { strandedNames } from '../departed';
 import { grantEntries } from '../entryKeys';
 import { forgetGroupLocally, localDb } from '../db';
+import { JOIN_REQUESTS_EVENT } from '../joinAlerts';
 import { holdsFullHistory } from '../coverage';
 import { epochSas, keyringSas, ringsAreUniform, rotateGroupKey, shareKeyring } from '../groupKeys';
 import { addPlaceholderLocal, syncNow } from '../sync';
@@ -472,6 +473,10 @@ export function MembersTab({ members, groupId, meId }: { members: MemberDto[]; g
     } finally {
       setDeciding(null);
       setConfirmApprove(null);
+      // The bell in the top bar counts the same queue from outside this
+      // screen. Telling it now beats leaving a decided request lit up there
+      // until its own poll comes round a minute later.
+      window.dispatchEvent(new CustomEvent(JOIN_REQUESTS_EVENT));
     }
   }
 
