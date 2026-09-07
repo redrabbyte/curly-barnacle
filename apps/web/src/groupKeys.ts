@@ -88,7 +88,10 @@ async function verifyChain(
 }
 
 /**
- * What this account itself recorded about an epoch, opened with its own KEK.
+ * What this account itself recorded about an epoch, opened with its own
+ * commitment key — derived from the identity private key, not from the KEK, so
+ * that a password change leaves every commitment already written still
+ * openable (see `deriveCommitmentKey`).
  *
  * The server stores these and cannot read or write one, so a fingerprint that
  * comes back out of a commitment is a statement by *us*, at a time we held the
@@ -181,10 +184,10 @@ export async function absorbInto(
   privateKey: Uint8Array,
   wrapped: WrappedKeyDto[],
   /**
-   * Fingerprints this account previously sealed under its own KEK, by epoch.
-   * Empty on a genuine first join to a group this account has never held a key
-   * for — there is nothing to have committed to yet — and that is the one case
-   * still resting on the delivery itself.
+   * Fingerprints this account previously sealed under its own commitment key,
+   * by epoch. Empty on a genuine first join to a group this account has never
+   * held a key for — there is nothing to have committed to yet — and that is
+   * the one case still resting on the delivery itself.
    */
   committed: ReadonlyMap<number, Uint8Array> = new Map(),
 ): Promise<AbsorbResult> {
