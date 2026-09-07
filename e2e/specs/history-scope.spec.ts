@@ -1,6 +1,8 @@
 import {
   ME,
+  epochKeyOf,
   expect,
+  openSealedName,
   seedExpense,
   seedGroup,
   seedGroupKey,
@@ -135,6 +137,13 @@ test('approving a history-scoped request rotates instead of handing over the rin
   const epochs = api.publishedWraps.map((w) => w.epoch);
   expect(epochs).toContain(1);
   expect(epochs).not.toContain(0);
+
+  // The name went with the mint, re-sealed under the new epoch: the member
+  // admitted on this epoch alone has no other key to read it with.
+  expect(api.nameSeals).toContainEqual({ groupId: GROUP, epoch: 1, via: 'mint' });
+  const sealed = api.groups.get(GROUP)!.sealedName!;
+  expect(sealed.epoch).toBe(1);
+  expect(await openSealedName(GROUP, sealed, epochKeyOf(api, GROUP, 1))).toBe('Flat');
 });
 
 /**

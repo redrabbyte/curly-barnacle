@@ -64,6 +64,13 @@
       "when": 1786615214219,
       "tag": "0008_scope_dedup_to_user",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "5",
+      "when": 1788774987431,
+      "tag": "0009_sealed_group_name",
+      "breakpoints": true
     }
   ]
 }

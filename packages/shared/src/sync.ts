@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { b64url, sealedEntitySchema, uuid, type SplitMeta } from './schemas.js';
+import { b64url, sealedEntitySchema, sealedNameSchema, uuid, type SplitMeta } from './schemas.js';
 
 /**
  * Sync protocol. Every mutation envelope carries a schema version `v`; the
@@ -16,8 +16,13 @@ import { b64url, sealedEntitySchema, uuid, type SplitMeta } from './schemas.js';
  * Refusing those clients outright is the alternative to letting each group
  * wait for its slowest member, which a member who never syncs again would
  * make permanent. They are told to update, and the app updates itself.
+ *
+ * 3 sealed the group name. A client from before it would send a readable name
+ * in `group.create`, show a group with no name at all once the plaintext
+ * column is gone, and never seal the names of the groups it already holds —
+ * which is the backfill every other member is waiting on.
  */
-export const SYNC_PROTOCOL = { current: 2, minSupported: 2 } as const;
+export const SYNC_PROTOCOL = { current: 3, minSupported: 3 } as const;
 export const MUTATION_SCHEMA_VERSION = 1;
 
 const envelope = {
@@ -58,17 +63,18 @@ export const mutationSchema = z.discriminatedUnion('type', [
   // now, so a group can be started on a train and the first expenses put into
   // it before anything reaches a server.
   //
-  // The name stays readable, unlike an expense: a stranger following an invite
-  // link holds no key by construction, and a landing page that cannot say
-  // which group it is for is not a landing page. It sits with the membership
-  // graph on the plaintext side of §4.1, which §6 already counts as leaked.
+  // The name is sealed like everything else the members wrote, under epoch 0
+  // — the key the creator minted a moment before this and wrapped to
+  // themselves alongside. It used to stay readable so the invite landing page
+  // could say which group a stranger was being asked into; the inviter's own
+  // device puts it in the link fragment now, which never reaches a server.
   z.object({
     ...envelope,
     type: z.literal('group.create'),
     groupId: uuid,
     data: z.object({
       id: uuid,
-      name: z.string().trim().min(1).max(120),
+      name: sealedNameSchema,
       defaultCurrency: z.string().regex(/^[A-Z]{3}$/),
       wrappedKey: z.object({
         epk: z.string().regex(/^[A-Za-z0-9_-]+$/).max(64),
@@ -180,11 +186,36 @@ export type MutationResult =
   | { id: string; status: 'applied' }
   | { id: string; status: 'rejected'; reason: string };
 
+/**
+ * A group as the client mirror holds it: the name opened, like an expense's
+ * description. `nameEpoch` is the epoch the stored name was opened from, or
+ * null when this device has never been able to open one and `name` is a
+ * placeholder the UI must not treat as the group's name — never seal it back,
+ * never put it in an invite link.
+ */
 export interface GroupDto {
   id: string;
   name: string;
   defaultCurrency: string;
   version: number;
+  nameEpoch: number | null;
+}
+
+/**
+ * A group as the wire carries it (design §4.2). The name travels sealed under
+ * the group's newest epoch, so a member admitted from today onwards — who
+ * holds nothing older — can still read it. `name` is the readable column from
+ * before names were sealed; it is sent while a group is still waiting for one
+ * of its members to seal it, and null once one has.
+ */
+export interface GroupWire {
+  id: string;
+  defaultCurrency: string;
+  version: number;
+  nameEpoch: number | null;
+  nameIv: string | null;
+  nameCt: string | null;
+  name?: string | null;
 }
 
 /** Extensible on purpose — more roles should not need a schema migration. */
@@ -358,7 +389,14 @@ export interface KeyCommitmentDto {
 }
 
 export interface GroupChanges {
-  group: GroupDto;
+  group: GroupWire;
+  /**
+   * The newest epoch anybody holds a wrap for, which is the one the name has
+   * to be sealed under. Plain numbers the server can compare without a key:
+   * a client that sees the name lagging behind this and holds this epoch is
+   * the one to re-seal it.
+   */
+  latestEpoch: number | null;
   members: MemberDto[];
   /** Every epoch this user can open. Sent whole; it is a handful of rows. */
   keys: WrappedKeyDto[];

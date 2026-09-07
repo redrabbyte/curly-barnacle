@@ -66,6 +66,8 @@ export const en = {
   'logout.tryAgain': 'Try again',
 
   'invitePage.noToken': 'This invite link is incomplete. Ask whoever sent it for the full link, or for a new one.',
+  // A link from before the name travelled in it: the server cannot say the name.
+  'invitePage.unnamedGroup': 'a group',
   'invitePage.oldLink':
     'This invite link is in an older format that is no longer accepted. Ask whoever sent it for a new one — any member of the group can make one.',
 
@@ -360,6 +362,9 @@ export const en = {
   'group.formerMember': '(former member)',
   'group.loading': 'Loading…',
   'group.notFound': 'Group not found (or not synced yet).',
+  // A group whose name this device cannot open yet: it is a member, the key
+  // has not arrived. Shown in place of the name, never sealed back as one.
+  'group.awaitingKeys': 'Waiting for the group key…',
   'group.csv': 'CSV',
   'group.import': 'Import',
   'group.inviteLink': 'Invite link',
@@ -691,6 +696,9 @@ export const en = {
   'push.you.removed': 'You were removed from {group}',
   'push.you.promoted': 'You are now an admin',
   'push.you.promoted.lastAdminLeft': 'You are now an admin — the last one left the group',
+  // Stands in for the name when this device holds none: removed from the
+  // group already, or not yet let in. The title falls back to the app's name.
+  'push.someGroup': 'a group',
 
   // --- errors from the API ------------------------------------------------
   'error.unexpected': 'Something went wrong. Try again.',
@@ -723,6 +731,8 @@ export const en = {
   'error.not_a_placeholder': 'That is a real account, not a name somebody typed.',
   'error.no_wraps_for_members': 'Nobody could be given access — try again.',
   'error.no_entries_in_group': 'Those entries are not in this group.',
+  'error.not_newest_epoch': 'The group has a newer key — sync, then try again.',
+  'error.epoch_not_held': 'You do not hold the key this needs.',
   'error.invite_invalid': 'This invite link is not valid any more.',
   'error.invite_spent': 'This invite link has already been used.',
   'error.join_declined': 'Your request to join was declined.',

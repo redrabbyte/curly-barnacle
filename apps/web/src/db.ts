@@ -110,6 +110,19 @@ export interface EntryKeyRow {
 }
 
 /**
+ * The name of a group this account has asked to join, as the invite link
+ * carried it (design §4.2). The group's own name is sealed, so the first
+ * thing the server sends about it — the push saying the request was approved
+ * — arrives before this device holds any key to open it. The worker reads
+ * this to title that one notification, and the row goes once the real name
+ * has been opened.
+ */
+export interface PendingNameRow {
+  groupId: string;
+  name: string;
+}
+
+/**
  * The account's unwrapped keys. Cached deliberately (design §1): without them
  * here the app cannot decrypt anything on a cold start, so it would be useless
  * offline. The trade is explicit — this protects data on the server, not on an
@@ -144,6 +157,7 @@ class LocalDb extends Dexie {
   coverage!: Table<CoverageRow, string>;
   entryGrants!: Table<EntryGrantRow, string>;
   entryKeys!: Table<EntryKeyRow, string>;
+  pendingNames!: Table<PendingNameRow, string>;
 
   constructor() {
     super('spendapp');
@@ -181,6 +195,12 @@ class LocalDb extends Dexie {
       entryGrants: 'id, groupId',
       entryKeys: 'id, groupId',
     });
+    // The mirror's group rows gain `nameEpoch`, which needs no index and so
+    // no upgrade: a row from before it reads as `undefined`, which the pull
+    // treats as "not opened from any epoch" and rewrites on its next pass.
+    this.version(9).stores({
+      pendingNames: 'groupId',
+    });
   }
 }
 
@@ -209,6 +229,7 @@ export async function forgetGroupLocally(groupId: string): Promise<void> {
       localDb.coverage,
       localDb.entryGrants,
       localDb.entryKeys,
+      localDb.pendingNames,
     ],
     async () => {
       // Blobs are keyed by attachment id, so collect those before the rows go.
@@ -224,6 +245,7 @@ export async function forgetGroupLocally(groupId: string): Promise<void> {
       await localDb.entryKeys.where('groupId').equals(groupId).delete();
       await localDb.coverage.delete(groupId);
       await localDb.cursors.delete(groupId);
+      await localDb.pendingNames.delete(groupId);
       await localDb.groups.delete(groupId);
       const stale = await localDb.outbox.filter((o) => o.mutation.groupId === groupId).primaryKeys();
       await localDb.outbox.bulkDelete(stale);

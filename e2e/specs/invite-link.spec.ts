@@ -3,8 +3,10 @@ import { expect, seedGroup, test } from '../fixtures/api';
 const GROUP = '33333333-3333-4333-8333-333333333333';
 // The token is in the fragment, deliberately: a fragment is never sent to a
 // server, so it cannot reach the API's request log, the proxy's access log, or
-// the `Referer` of anything the invite page loads (design §4.7).
-const EXPECTED = 'http://127.0.0.1:4173/invite#tokAAAAAAAAAAAAAAAAAA';
+// the `Referer` of anything the invite page loads (design §4.7). The group's
+// name rides after it, base64url — the server holds the name sealed and cannot
+// put it on the landing page, so the inviting device writes it into the link.
+const EXPECTED = 'http://127.0.0.1:4173/invite#tokAAAAAAAAAAAAAAAAAA.VHJpcA';
 
 test.beforeEach(async ({ api }) => {
   seedGroup(api, GROUP, 'Trip', [

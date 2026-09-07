@@ -133,14 +133,9 @@ export async function leaveGroup(userId: string, groupId: string): Promise<'left
 
   notifyGroup(groupId, userId, 'member.left', `/g/${groupId}?tab=members`);
   if (heir) {
-    const groupRows = await db
-      .select({ name: schema.groups.name })
-      .from(schema.groups)
-      .where(eq(schema.groups.id, groupId))
-      .limit(1);
     notifyUsers(
       [heir.userId],
-      groupRows[0]?.name ?? 'your group',
+      groupId,
       'you.promoted.lastAdminLeft',
       `/g/${groupId}?tab=members`,
     );

@@ -42,10 +42,15 @@ export async function accountRoutes(app: FastifyInstance): Promise<void> {
       .where(eq(schema.users.id, userId))
       .limit(1);
 
+    // The group's name is sealed like its entries, so it is in the other half
+    // of the export. What is here is the ciphertext this server holds for it,
+    // which is all it can honestly say about the name.
     const memberships = await db
       .select({
         groupId: schema.groupMembers.groupId,
-        groupName: schema.groups.name,
+        groupNameEpoch: schema.groups.nameEpoch,
+        groupNameIv: schema.groups.nameIv,
+        groupNameCt: schema.groups.nameCt,
         defaultCurrency: schema.groups.defaultCurrency,
         role: schema.groupMembers.role,
         joinedAt: schema.groupMembers.joinedAt,
@@ -152,9 +157,9 @@ export async function accountRoutes(app: FastifyInstance): Promise<void> {
       exportedAt: new Date().toISOString(),
       note:
         'Everything the server can read about this account. What each expense, payment, ' +
-        'comment and receipt actually says is encrypted with a key the server does not ' +
-        'have, so it is not here — the export produced inside the app contains those, ' +
-        'decrypted on the device.',
+        'comment and receipt actually says, and what each group is called, is encrypted ' +
+        'with a key the server does not have, so it is not here — the export produced ' +
+        'inside the app contains those, decrypted on the device.',
       account,
       memberships,
       joinRequests,

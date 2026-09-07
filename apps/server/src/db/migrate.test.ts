@@ -347,3 +347,115 @@ d('requiring an entry key', () => {
     ).rejects.toThrow();
   });
 });
+
+/**
+ * Sealing the group name (0009).
+ *
+ * Additive on `groups`, and one rewrite of readable data: the `group.created`
+ * activity payload used to carry the name. What has to hold is that nothing
+ * sealed moves by a byte, that the name is still there to be sealed by a
+ * member afterwards, and that the one readable copy nobody reads is gone.
+ */
+const SEALED_NAME = '0009_sealed_group_name.sql';
+const CREATED = 'aaaaaaaa-0000-4000-8000-0000000000c9';
+
+d('sealing the group name', () => {
+  let c: mysql.Connection;
+  const before = new Map<string, string>();
+  const entryKey = new Uint8Array(32).fill(0x5e);
+
+  beforeAll(async () => {
+    const admin = await mysql.createConnection({ uri: process.env.DATABASE_URL!, multipleStatements: true });
+    await admin.query(`drop database if exists \`${SCRATCH}3\``);
+    await admin.query(`create database \`${SCRATCH}3\``);
+    await admin.end();
+    const url = new URL(process.env.DATABASE_URL!);
+    url.pathname = `/${SCRATCH}3`;
+    c = await mysql.createConnection({ uri: url.toString(), multipleStatements: true });
+    for (const f of migrationsUpTo(SEALED_NAME)) await run(c, f);
+
+    await c.query(`insert into users (id, username, display_name, is_placeholder, created_at)
+                   values (?, 'alice', 'Alice', 0, now(3))`, [ALICE]);
+    await c.query(`insert into \`groups\` (id, name, default_currency, created_by, created_at, version)
+                   values (?, 'Trip', 'EUR', ?, now(3), 7)`, [GROUP, ALICE]);
+    await c.query(`insert into group_keys (group_id, epoch, user_id, epk, iv, ct, created_at)
+                   values (?, 0, ?, 'epk', 'iv', 'ct', now(3))`, [GROUP, ALICE]);
+    // An entry in the current shape, sealed for real.
+    const e = await sealJson(entryKey, EXPENSE_CONTENT, expenseAad(EXPENSE, GROUP, 0));
+    const w = await seal(groupKeyFor(0), entryKey, entryKeyAad('expense', EXPENSE, GROUP, 0));
+    await c.query(
+      `insert into expenses (id, group_id, key_epoch, iv, ct, key_iv, key_ct, created_by, created_at, updated_by, updated_at, version)
+       values (?, ?, 0, ?, ?, ?, ?, ?, now(3), ?, now(3), 5)`,
+      [EXPENSE, GROUP, toBase64Url(e.iv), toBase64Url(e.ciphertext), toBase64Url(w.iv), toBase64Url(w.ciphertext), ALICE, ALICE],
+    );
+    // The readable copy of the name the log used to keep, beside a payload
+    // that must not be touched.
+    await c.query(
+      `insert into activity (id, group_id, version, actor_id, type, entity_type, entity_id, payload, created_at)
+       values (?, ?, 1, ?, 'group.created', 'group', ?, ?, now(3)),
+              (?, ?, 5, ?, 'expense.created', 'expense', ?, ?, now(3))`,
+      [
+        CREATED, GROUP, ALICE, GROUP, JSON.stringify({ name: 'Trip', defaultCurrency: 'EUR' }),
+        ACTIVITY, GROUP, ALICE, EXPENSE, JSON.stringify({ keyEpoch: 0, iv: 'sn-iv', ct: 'sn-ct' }),
+      ],
+    );
+    for (const table of ['expenses', 'group_keys', 'users']) before.set(table, await fingerprint(c, table));
+  }, 60_000);
+
+  afterAll(async () => {
+    if (!c) return;
+    await c.query(`drop database if exists \`${SCRATCH}3\``);
+    await c.end();
+  });
+
+  it('applies without touching a sealed byte', async () => {
+    await run(c, SEALED_NAME);
+    for (const [table, was] of before) expect(await fingerprint(c, table), `table ${table} changed`).toBe(was);
+    const [[e]] = await c.query<mysql.RowDataPacket[]>('select * from expenses where id = ?', [EXPENSE]);
+    const recovered = await open(
+      groupKeyFor(0),
+      { iv: fromBase64Url(e!.key_iv as string), ciphertext: fromBase64Url(e!.key_ct as string) },
+      entryKeyAad('expense', EXPENSE, GROUP, 0),
+    );
+    expect(
+      await openSealed(recovered, { iv: e!.iv as string, ct: e!.ct as string }, expenseAad(EXPENSE, GROUP, 0)),
+    ).toEqual(EXPENSE_CONTENT);
+  });
+
+  it('leaves the readable name in place for a member to seal, beside empty sealed columns', async () => {
+    const [[g]] = await c.query<mysql.RowDataPacket[]>('select * from `groups` where id = ?', [GROUP]);
+    expect(g!.name).toBe('Trip');
+    expect(g!.name_epoch).toBeNull();
+    expect(g!.name_iv).toBeNull();
+    expect(g!.name_ct).toBeNull();
+  });
+
+  it('takes the name out of the activity log and nothing else', async () => {
+    const [[created]] = await c.query<mysql.RowDataPacket[]>('select payload from activity where id = ?', [CREATED]);
+    const payload = typeof created!.payload === 'string' ? JSON.parse(created!.payload as string) : created!.payload;
+    expect(payload).toEqual({ defaultCurrency: 'EUR' });
+    const [[other]] = await c.query<mysql.RowDataPacket[]>('select payload from activity where id = ?', [ACTIVITY]);
+    const untouched = typeof other!.payload === 'string' ? JSON.parse(other!.payload as string) : other!.payload;
+    expect(untouched).toEqual({ keyEpoch: 0, iv: 'sn-iv', ct: 'sn-ct' });
+  });
+
+  it('is what a member then does: seal it under the newest epoch and null the readable copy', async () => {
+    // The client's backfill, as one statement — first writer wins on the
+    // epoch, and the plaintext goes in the same write.
+    const sealed = await sealJson(groupKeyFor(0), { name: 'Trip' }, new TextEncoder().encode(`groupname|${GROUP}|0`));
+    const [res] = await c.query<mysql.ResultSetHeader>(
+      `update \`groups\` set name = null, name_epoch = 0, name_iv = ?, name_ct = ?
+       where id = ? and (name_epoch is null or name_epoch < 0)`,
+      [toBase64Url(sealed.iv), toBase64Url(sealed.ciphertext), GROUP],
+    );
+    expect(res.affectedRows).toBe(1);
+    const [[g]] = await c.query<mysql.RowDataPacket[]>('select * from `groups` where id = ?', [GROUP]);
+    expect(g!.name).toBeNull();
+    expect(
+      await openSealed(groupKeyFor(0), { iv: g!.name_iv as string, ct: g!.name_ct as string }, new TextEncoder().encode(`groupname|${GROUP}|0`)),
+    ).toEqual({ name: 'Trip' });
+    // The dump check from the README, in miniature.
+    const [rows] = await c.query<mysql.RowDataPacket[]>('select * from `groups`');
+    expect(JSON.stringify(rows)).not.toContain('Trip');
+  });
+});

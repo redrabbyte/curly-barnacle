@@ -38,3 +38,12 @@ export const attachmentAad = (id: string, groupId: string, epoch: number): Uint8
  */
 export const entryKeyAad = (type: EntryType, id: string, groupId: string, epoch: number): Uint8Array =>
   utf8(`entrykey|${type}|${id}|${groupId}|${epoch}`);
+
+/**
+ * The group's name, sealed under one of its epoch keys (design §4.2). Bound to
+ * the group and the epoch and nothing else — not to the name itself, which is
+ * what would make renaming a re-seal of everything, and not into any entry's
+ * AAD, where a free-text field would sit among fixed-format ids.
+ */
+export const groupNameAad = (groupId: string, epoch: number): Uint8Array =>
+  utf8(`groupname|${groupId}|${epoch}`);

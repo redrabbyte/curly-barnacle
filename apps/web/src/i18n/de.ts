@@ -63,6 +63,7 @@ export const de: Catalogue = {
   'logout.tryAgain': 'Erneut versuchen',
 
   'invitePage.noToken': 'Dieser Einladungslink ist unvollständig. Frag die Person, die ihn geschickt hat, nach dem vollständigen oder einem neuen Link.',
+  'invitePage.unnamedGroup': 'eine Gruppe',
   'invitePage.oldLink':
     'Dieser Einladungslink hat ein älteres Format, das nicht mehr akzeptiert wird. Frag nach einem neuen — jedes Mitglied der Gruppe kann einen erstellen.',
 
@@ -349,6 +350,7 @@ export const de: Catalogue = {
   'group.formerMember': '(ehemaliges Mitglied)',
   'group.loading': 'Wird geladen …',
   'group.notFound': 'Gruppe nicht gefunden (oder noch nicht synchronisiert).',
+  'group.awaitingKeys': 'Warte auf den Gruppenschlüssel …',
   'group.csv': 'CSV',
   'group.import': 'Importieren',
   'group.inviteLink': 'Einladungslink',
@@ -670,6 +672,7 @@ export const de: Catalogue = {
   'push.you.removed': 'Du wurdest aus {group} entfernt',
   'push.you.promoted': 'Du bist jetzt Admin',
   'push.you.promoted.lastAdminLeft': 'Du bist jetzt Admin — die letzte Person mit Adminrechten ist gegangen',
+  'push.someGroup': 'einer Gruppe',
 
   // --- errors from the API ------------------------------------------------
   'error.unexpected': 'Etwas ist schiefgelaufen. Versuch es noch einmal.',
@@ -699,6 +702,8 @@ export const de: Catalogue = {
   'error.not_a_placeholder': 'Das ist ein echtes Konto, kein eingetragener Name.',
   'error.no_wraps_for_members': 'Niemandem konnte Zugriff gegeben werden — versuch es noch einmal.',
   'error.no_entries_in_group': 'Diese Einträge gehören nicht zu dieser Gruppe.',
+  'error.not_newest_epoch': 'Die Gruppe hat einen neueren Schlüssel — synchronisieren und noch einmal versuchen.',
+  'error.epoch_not_held': 'Du hast den Schlüssel nicht, den das braucht.',
   'error.invite_invalid': 'Dieser Einladungslink gilt nicht mehr.',
   'error.invite_spent': 'Dieser Einladungslink wurde schon benutzt.',
   'error.join_declined': 'Deine Beitrittsanfrage wurde abgelehnt.',

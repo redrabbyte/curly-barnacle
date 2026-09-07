@@ -71,7 +71,7 @@ async function pool<T>(items: T[], limit: number, work: (item: T) => Promise<voi
  */
 export function notifyUsers(
   userIds: string[],
-  group: string,
+  groupId: string,
   kind: NotificationKind,
   url: string,
   actor?: string,
@@ -85,9 +85,11 @@ export function notifyUsers(
       .where(inArray(schema.pushSubscriptions.userId, userIds));
     if (subs.length === 0) return;
 
-    // A kind and the names, never a sentence: the server does not know what
-    // language the reader picked, and the service worker does.
-    const payload = JSON.stringify({ kind, group, actor, url, entry } satisfies PushPayload);
+    // A kind, the actor and the group's id, never a sentence: the server does
+    // not know what language the reader picked, and the service worker does.
+    // The group's name is sealed, so the id is all this can say; the device
+    // holds the name opened and puts it in the title itself.
+    const payload = JSON.stringify({ kind, groupId, actor, url, entry } satisfies PushPayload);
 
     await pool(subs, MAX_IN_FLIGHT, async (sub) => {
       /**
@@ -155,18 +157,11 @@ export function notifyGroup(
 ): void {
   if (!enabled) return;
   void (async () => {
-    const groupRows = await db
-      .select({ name: schema.groups.name })
-      .from(schema.groups)
-      .where(eq(schema.groups.id, groupId))
-      .limit(1);
     const actorRows = await db
       .select({ displayName: schema.users.displayName })
       .from(schema.users)
       .where(eq(schema.users.id, actorId))
       .limit(1);
-    const group = groupRows[0];
-    if (!group) return;
     const actorName = actorRows[0]?.displayName ?? 'Someone';
 
     const members = await db
@@ -181,6 +176,6 @@ export function notifyGroup(
       );
     if (members.length === 0) return;
 
-    notifyUsers(members.map((m) => m.userId), group.name, kind, path ?? `/g/${groupId}`, actorName, entry);
+    notifyUsers(members.map((m) => m.userId), groupId, kind, path ?? `/g/${groupId}`, actorName, entry);
   })().catch(() => {});
 }

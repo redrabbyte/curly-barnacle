@@ -299,7 +299,12 @@ d('idempotency', () => {
     clientTs: new Date().toISOString(),
     type: 'group.create',
     groupId: id,
-    data: { id, name: 'Trip', defaultCurrency: 'EUR', wrappedKey: { epk: b64(32), iv: b64(12), ct: b64(48) } },
+    data: {
+      id,
+      name: { iv: b64(12), ct: b64(48) },
+      defaultCurrency: 'EUR',
+      wrappedKey: { epk: b64(32), iv: b64(12), ct: b64(48) },
+    },
   });
 
   it('does not let one account short-circuit another account\'s mutation', async () => {

@@ -5,7 +5,7 @@ import { deriveSas, formatSas, sha256Hex } from '@spendapp/shared';
 import { api } from '../api';
 import { useAuth } from '../auth';
 import { localDb } from '../db';
-import { clearInviteToken, readInviteToken, stashInviteToken } from '../inviteToken';
+import { clearInviteToken, readInvite, stashInvite } from '../inviteToken';
 import { loadKeys } from '../keys';
 import { syncNow } from '../sync';
 import type { Translator } from '../i18n';
@@ -19,7 +19,6 @@ interface Claimable {
   alsoKnownAs?: string[];
 }
 interface InviteInfo {
-  groupName: string;
   inviterName: string;
   /** False: this link shares nothing recorded before it is accepted (§4.7). */
   shareHistory?: boolean;
@@ -45,8 +44,12 @@ function claimLabel(t: Translator, c: Claimable): string {
 export function InvitePage() {
   // From the fragment, or from the stash if this is the return leg of a login.
   // Read once: the fragment is cleared below, and re-reading it after that
-  // would turn a signed-in joiner's page into an expired one.
-  const [token] = useState(readInviteToken);
+  // would turn a signed-in joiner's page into an expired one. The group's name
+  // comes from the same fragment: the server holds it sealed and cannot say
+  // it, so the inviter's device wrote it into the link (design §4.2).
+  const [invite] = useState(readInvite);
+  const token = invite?.token ?? null;
+  const groupName = invite?.name ?? null;
   const { user, loading } = useAuth();
   const t = useT();
   const navigate = useNavigate();
@@ -111,6 +114,9 @@ export function InvitePage() {
         setPending(true);
         setPendingGroupId(res.groupId);
         setBusy(false);
+        // The push saying this was approved arrives before any key to open
+        // the group's real name does. The worker titles it from here.
+        if (groupName) await localDb.pendingNames.put({ groupId: res.groupId, name: groupName }).catch(() => {});
         // The admin sees the same digits (design §4.3). Derived from this
         // device's own public key, so an interceptor who followed the link
         // reads out a different number — which is the only thing that
@@ -139,7 +145,7 @@ export function InvitePage() {
   return (
     <div className="mx-auto mt-10 flex max-w-sm flex-col items-center gap-4 text-center">
       <p>{t('invitePage.invitedBy', { name: info.inviterName })}</p>
-      <h1 className="text-2xl font-semibold">{info.groupName}</h1>
+      <h1 className="text-2xl font-semibold">{groupName ?? t('invitePage.unnamedGroup')}</h1>
 
       {/* Rejoining on the same account restores the old membership row by
           itself, so there is nothing to pick. Saying so is the whole fix: the
@@ -245,7 +251,7 @@ export function InvitePage() {
           // The token travels in this tab's storage, not in `next` — a query
           // string is logged exactly like the path this was moved out of.
           to="/login?next=%2Finvite"
-          onClick={() => token && stashInviteToken(token)}
+          onClick={() => invite && stashInvite(invite)}
           className="rounded bg-teal-700 px-6 py-2 font-medium text-white"
         >
           {t('invitePage.logInToJoin')}

@@ -76,7 +76,8 @@ test('joining as someone new works while other names are still unclaimed', async
 
 test('the claimable list is withheld from anonymous visitors', async ({ page, api }) => {
   api.signedIn = false;
-  await page.goto('/invite#tokAAAAAAAAAAAAAAAAAA');
+  // The name comes from the link itself: the server holds it sealed.
+  await page.goto('/invite#tokAAAAAAAAAAAAAAAAAA.VHJpcA');
   // The landing page still names the group; it must not enumerate members.
   await expect(page.getByText('Trip')).toBeVisible();
   await expect(page.getByText('Are you one of these people?')).toHaveCount(0);

@@ -14,7 +14,7 @@ import { NavigationRoute, registerRoute } from 'workbox-routing';
 import { CacheFirst } from 'workbox-strategies';
 import { isLanguage, translate, type Language, type MessageKey } from './i18n';
 import { readLanguagePref } from './i18n/prefs';
-import { involvementWithin } from './pushFilter';
+import { describePushWithin } from './pushFilter';
 
 precacheAndRoute(self.__WB_MANIFEST);
 
@@ -103,17 +103,27 @@ self.addEventListener('push', (event) => {
       // one line per group that the next one replaces rather than stacks.
       const entry = payload.entry;
       const quietBody = kind ? quietBodyFor(kind) : null;
-      const quiet = entry && quietBody ? (await involvementWithin(entry)) === 'theirs' : false;
+      // The group's name comes from this device, not the payload: the server
+      // holds it sealed and sends only the id. Nothing held for it — removed
+      // from the group, or not let in yet — and the app's own name stands in
+      // as the title, with a generic phrase where the wording needs one.
+      const { involvement, groupName } = await describePushWithin(
+        { groupId: payload.groupId ?? '' },
+        entry && quietBody ? entry : undefined,
+      );
+      const title = groupName ?? 'SpendApp';
+      const group = groupName ?? translate(language, 'push.someGroup');
+      const quiet = entry && quietBody ? involvement === 'theirs' : false;
 
       if (quiet && entry && quietBody) {
         const tag = `quiet:${entry.groupId}`;
         const existing = await self.registration.getNotifications({ tag });
         const count = existing.reduce((n, e) => n + quietCountOf(e), 0) + 1;
-        await self.registration.showNotification(payload.group ?? 'SpendApp', {
+        await self.registration.showNotification(title, {
           body:
             count > 1
               ? translate(language, 'push.other.several', { count })
-              : translate(language, quietBody, { actor: payload.actor ?? '', group: payload.group ?? '' }),
+              : translate(language, quietBody, { actor: payload.actor ?? '', group }),
           icon: '/icon-192.png',
           badge: '/badge-96.png',
           // No sound, no buzz — the whole point — and one line per group, so a
@@ -129,10 +139,8 @@ self.addEventListener('push', (event) => {
         return;
       }
 
-      const body = kind
-        ? translate(language, `push.${kind}`, { actor: payload.actor ?? '', group: payload.group ?? '' })
-        : '';
-      await self.registration.showNotification(payload.group ?? 'SpendApp', {
+      const body = kind ? translate(language, `push.${kind}`, { actor: payload.actor ?? '', group }) : '';
+      await self.registration.showNotification(title, {
         body,
         // Android builds the status-bar icon out of the badge's *alpha
         // channel* alone: every opaque pixel is repainted white and the colour

@@ -10,6 +10,7 @@ import {
   inviteTokenSchema,
   publishKeyCommitmentsSchema,
   publishKeysSchema,
+  setGroupNameSchema,
   fromBase64Url,
   open,
   openJson,
@@ -29,6 +30,7 @@ import {
   type EntryGrantDto,
   type ExpenseWire,
   type GroupChanges,
+  type GroupWire,
   type PaymentWire,
   type MemberDto,
   type Mutation,
@@ -96,14 +98,43 @@ function testKeys() {
   return keyFixture;
 }
 
+/** A group as the mock holds it: the name readable here, sealed on the wire. */
+export interface StubGroup {
+  id: string;
+  name: string;
+  defaultCurrency: string;
+  version: number;
+  /**
+   * The name as the client sealed it — in the create, a mint, or a backfill
+   * — sent back verbatim like the server does. Absent for a seeded group,
+   * which the mock seals itself under the newest seeded epoch; absent with no
+   * seeded key at all, and the readable name goes out as it did before names
+   * were sealed, which is exactly the shape a real server sends while a
+   * group waits for its first member to seal it.
+   */
+  sealedName?: { epoch: number; iv: string; ct: string };
+  /**
+   * A group from before names were sealed: the readable name goes out even
+   * though a key is seeded, until the client seals it — which is the backfill
+   * a spec sets this to watch.
+   */
+  unsealed?: boolean;
+}
+
 export interface ApiState {
   signedIn: boolean;
-  groups: Map<string, { id: string; name: string; defaultCurrency: string; version: number }>;
+  groups: Map<string, StubGroup>;
   members: Map<string, MemberDto[]>;
   /** Set once the client has logged in for real and holds account keys. */
   keysUnlocked: boolean;
-  /** Unwrapped keys of groups the client created during a test. */
+  /**
+   * Unwrapped keys of groups the client created during a test, by group id
+   * for epoch 0 — and by `groupId:epoch` for every epoch it minted since,
+   * unwrapped from the wrap it addressed to itself.
+   */
   groupSecrets: Map<string, Uint8Array>;
+  /** Every sealed name the client sent, and how: a spec checks the name never left readable. */
+  nameSeals: { groupId: string; epoch: number; via: 'create' | 'mint' | 'backfill' }[];
   /** Group keys wrapped to the signed-in user, as the sync payload carries them. */
   groupKeys: Map<string, { groupId: string; epoch: number; epk: string; iv: string; ct: string }[]>;
   /** Pending join requests per group — only admins ever see these. */
@@ -153,10 +184,10 @@ export interface ApiState {
   policy: { version: string; text: string; installed: boolean };
   /** The policy version the signed-in account has accepted, or null for none. */
   acceptedPolicyVersion: string | null;
-  /** What deleting the account would strand, as the confirm dialog lists it. */
+  /** What deleting the account would strand, as the confirm dialog lists it. Named by the client, from its mirror. */
   deletionPreview: {
     groupId: string;
-    name: string;
+    members: number;
     willBeDeleted: boolean;
     willPromoteAnAdmin: boolean;
     orphanedEpochs: number[];
@@ -184,6 +215,7 @@ export function createState(overrides: Partial<ApiState> = {}): ApiState {
     members: new Map(),
     groupKeys: new Map(),
     groupSecrets: new Map(),
+    nameSeals: [],
     joinRequests: new Map(),
     expenses: new Map(),
     payments: new Map(),
@@ -240,6 +272,66 @@ function bump(state: ApiState, groupId: string): number {
  * blob would be skipped and leave an empty keyring that looks like success.
  */
 export const groupKeyFor = (epoch = 0): Uint8Array => new Uint8Array(32).fill(epoch + 1);
+
+/** The key for an epoch as the mock knows it: minted by the client, or seeded. */
+export function epochKeyOf(state: ApiState, groupId: string, epoch: number): Uint8Array {
+  return (
+    state.groupSecrets.get(`${groupId}:${epoch}`) ??
+    (epoch === 0 ? state.groupSecrets.get(groupId) : undefined) ??
+    groupKeyFor(epoch)
+  );
+}
+
+const groupNameAad = (groupId: string, epoch: number): Uint8Array =>
+  new TextEncoder().encode(`groupname|${groupId}|${epoch}`);
+
+/** Open a sealed group name the client produced, so a spec can check it says what was typed. */
+export async function openSealedName(
+  groupId: string,
+  sealed: { epoch: number; iv: string; ct: string },
+  key?: Uint8Array,
+): Promise<string> {
+  const content = await openJson<{ name: string }>(
+    key ?? groupKeyFor(sealed.epoch),
+    { iv: fromBase64Url(sealed.iv), ciphertext: fromBase64Url(sealed.ct) },
+    groupNameAad(groupId, sealed.epoch),
+  );
+  return content.name;
+}
+
+/** The newest epoch the signed-in user holds a wrap for, as the server reports it. */
+function latestEpochOf(state: ApiState, groupId: string): number | null {
+  const epochs = (state.groupKeys.get(groupId) ?? []).map((k) => k.epoch);
+  return epochs.length === 0 ? null : Math.max(...epochs);
+}
+
+/**
+ * The group row for the wire, name sealed (design §4.2). A seeded group is
+ * sealed here under the newest seeded epoch, once, and re-sealed if a newer
+ * epoch is seeded later — the same rule the real server holds clients to.
+ */
+async function groupWire(state: ApiState, group: StubGroup): Promise<GroupWire> {
+  const latest = latestEpochOf(state, group.id);
+  if (
+    latest !== null &&
+    !group.unsealed &&
+    (!group.sealedName || group.sealedName.epoch < latest) &&
+    !state.groupSecrets.has(group.id)
+  ) {
+    const sealed = await sealJson(groupKeyFor(latest), { name: group.name }, groupNameAad(group.id, latest));
+    group.sealedName = { epoch: latest, iv: toBase64Url(sealed.iv), ct: toBase64Url(sealed.ciphertext) };
+  }
+  const { sealedName } = group;
+  return {
+    id: group.id,
+    defaultCurrency: group.defaultCurrency,
+    version: group.version,
+    nameEpoch: sealedName?.epoch ?? null,
+    nameIv: sealedName?.iv ?? null,
+    nameCt: sealedName?.ct ?? null,
+    name: sealedName ? null : group.name,
+  };
+}
 
 const expenseAad = (id: string, groupId: string, epoch: number): Uint8Array =>
   new TextEncoder().encode(`expense|${id}|${groupId}|${epoch}`);
@@ -464,7 +556,7 @@ export async function seedExpense(
  * pull, because a client that missed one would hold ciphertext it cannot open
  * with no way to notice.
  */
-function changesFor(state: ApiState, cursors: Record<string, number> = {}): Record<string, GroupChanges> {
+async function changesFor(state: ApiState, cursors: Record<string, number> = {}): Promise<Record<string, GroupChanges>> {
   const changes: Record<string, GroupChanges> = {};
   for (const [id, group] of state.groups) {
     const members = state.members.get(id) ?? [];
@@ -486,7 +578,8 @@ function changesFor(state: ApiState, cursors: Record<string, number> = {}): Reco
       ...activity.map((a) => a.version),
     );
     changes[id] = {
-      group,
+      group: await groupWire(state, group),
+      latestEpoch: latestEpochOf(state, id),
       members: members.filter((m) => m.version > cursor),
       keys: state.groupKeys.get(id) ?? [],
       // None: the fake server has never seen this browser write one, which is
@@ -563,7 +656,7 @@ export async function installApi(context: BrowserContext, state: ApiState): Prom
       return json(route, {
         format: 'spendapp-account-export/1',
         account: { id: ME.id, username: ME.username, displayName: ME.displayName },
-        memberships: [...state.groups.values()].map((g) => ({ groupId: g.id, groupName: g.name })),
+        memberships: [...state.groups.values()].map((g) => ({ groupId: g.id })),
       });
     }
     if (path === '/api/me/deletion-preview') {
@@ -865,11 +958,45 @@ export async function installApi(context: BrowserContext, state: ApiState): Prom
             const list = state.groupKeys.get(groupId) ?? [];
             list.push({ groupId, epoch: w.epoch, epk: w.epk, iv: w.iv, ct: w.ct });
             state.groupKeys.set(groupId, list);
+            // Unwrapped for real, so the mock can open what is sealed under
+            // this epoch from here on — the name in this very request first.
+            state.groupSecrets.set(`${groupId}:${w.epoch}`, await unwrapForTestIdentity(w));
+          }
+          // The name re-sealed under the minted epoch, kept verbatim like the
+          // server keeps it. A rotation is one epoch, as the server insists.
+          const [epoch] = [...epochs];
+          if (data.name && epoch !== undefined) {
+            const group = state.groups.get(groupId);
+            if (group) group.sealedName = { epoch, ...data.name };
+            state.nameSeals.push({ groupId, epoch, via: 'mint' });
           }
         }
         return json(route, { stored: already ? 0 : data.wraps.length, skipped: 0, minted: !already });
       }
       return json(route, { stored: data.wraps.length, skipped: 0 });
+    }
+
+    /**
+     * The name sealed under the newest epoch, after the fact (design §4.2):
+     * a group from before names were sealed, or one whose rotation went
+     * through without it. Checked as the server checks it — newest epoch,
+     * held by the caller — and stored unread.
+     */
+    const nameMatch = /^\/api\/groups\/([^/]+)\/name$/.exec(path);
+    if (nameMatch && method === 'POST') {
+      const data = check(setGroupNameSchema, body());
+      if (!data) return;
+      const groupId = nameMatch[1]!;
+      const group = state.groups.get(groupId);
+      if (!group) return json(route, { error: 'not_found' }, 404);
+      if (data.epoch !== latestEpochOf(state, groupId)) return json(route, { error: 'not_newest_epoch' }, 409);
+      const stored = !group.sealedName || group.sealedName.epoch < data.epoch;
+      if (stored) {
+        group.sealedName = { epoch: data.epoch, iv: data.iv, ct: data.ct };
+        group.unsealed = false;
+      }
+      state.nameSeals.push({ groupId, epoch: data.epoch, via: 'backfill' });
+      return json(route, { stored });
     }
 
     const leaveMatch = /^\/api\/groups\/([^/]+)\/leave$/.exec(path);
@@ -959,8 +1086,8 @@ export async function installApi(context: BrowserContext, state: ApiState): Prom
           alsoKnownAs: members.filter((o) => o.aliasOf === m.userId).map((o) => o.displayName),
         }));
       // The server withholds this list from anonymous callers.
+      // No group name: the server holds it sealed. The link carries it.
       return json(route, {
-        groupName: state.groups.get(groupId ?? '')?.name ?? 'Group',
         inviterName: 'Someone',
         claimable: state.signedIn ? claimable : [],
         wasMember: state.signedIn && mine ? { userId: mine.userId, displayName: mine.displayName } : null,
@@ -1002,22 +1129,26 @@ export async function installApi(context: BrowserContext, state: ApiState): Prom
         // has to create them here or the client's local copy would be pruned
         // as "a group you are no longer in" on the very next pull.
         if (m.type === 'group.create') {
-          seedGroup(state, m.data.id, m.data.name, [
+          // Unwrapped for real, so a spec can open what the client sealed —
+          // and so the mock can read the name, which arrives sealed under
+          // this key and is the only readable copy the mock will ever get.
+          const secret = await unwrapKeyWith(TEST_PRIVATE_KEY, {
+            epk: fromBase64Url(m.data.wrappedKey.epk),
+            iv: fromBase64Url(m.data.wrappedKey.iv),
+            ciphertext: fromBase64Url(m.data.wrappedKey.ct),
+          });
+          state.groupSecrets.set(m.data.id, secret);
+          const name = await openSealedName(m.data.id, { epoch: 0, ...m.data.name }, secret);
+          seedGroup(state, m.data.id, name, [
             { userId: ME.id, displayName: ME.displayName, isPlaceholder: false, role: 'admin' },
           ]);
-          state.groups.get(m.data.id)!.defaultCurrency = m.data.defaultCurrency;
+          const group = state.groups.get(m.data.id)!;
+          group.defaultCurrency = m.data.defaultCurrency;
+          group.sealedName = { epoch: 0, ...m.data.name };
+          state.nameSeals.push({ groupId: m.data.id, epoch: 0, via: 'create' });
           const list = state.groupKeys.get(m.data.id) ?? [];
           list.push({ groupId: m.data.id, epoch: 0, ...m.data.wrappedKey });
           state.groupKeys.set(m.data.id, list);
-          // Unwrapped for real, so a spec can open what the client sealed.
-          state.groupSecrets.set(
-            m.data.id,
-            await unwrapKeyWith(TEST_PRIVATE_KEY, {
-              epk: fromBase64Url(m.data.wrappedKey.epk),
-              iv: fromBase64Url(m.data.wrappedKey.iv),
-              ciphertext: fromBase64Url(m.data.wrappedKey.ct),
-            }),
-          );
         }
         if (m.type === 'member.add') {
           const list = state.members.get(m.data.groupId) ?? [];
@@ -1144,7 +1275,7 @@ export async function installApi(context: BrowserContext, state: ApiState): Prom
       return json(route, {
         protocol: SYNC_PROTOCOL,
         results: data.mutations.map((m) => ({ id: m.id, status: 'applied' as const })),
-        changes: changesFor(state, data.cursors),
+        changes: await changesFor(state, data.cursors),
       });
     }
 

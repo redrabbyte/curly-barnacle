@@ -58,7 +58,14 @@ export function GroupsPage() {
                 to={`/g/${g.id}`}
                 className="block rounded border border-slate-200 dark:border-slate-700 px-4 py-3 hover:border-teal-600"
               >
-                <span className="font-medium">{g.name}</span>
+                <span className="font-medium">
+                  {/* A member whose key has not arrived: say so, rather than a blank line. */}
+                  {g.name === '' ? (
+                    <span className="italic text-slate-500 dark:text-slate-400">{t('group.awaitingKeys')}</span>
+                  ) : (
+                    g.name
+                  )}
+                </span>
                 <span className="ml-2 text-sm text-slate-500 dark:text-slate-400">
                   {t('groups.memberCount', { count: memberCount(g.id) })} · {g.defaultCurrency}
                 </span>

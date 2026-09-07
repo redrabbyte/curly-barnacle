@@ -1,9 +1,16 @@
 import { and, eq, gt, inArray, isNull, ne, or, sql } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { admitSchema, grantEntriesSchema, publishKeyCommitmentsSchema, publishKeysSchema } from '@spendapp/shared';
+import {
+  admitSchema,
+  grantEntriesSchema,
+  publishKeyCommitmentsSchema,
+  publishKeysSchema,
+  setGroupNameSchema,
+} from '@spendapp/shared';
 import { db, schema } from '../db/index.js';
 import { isApiError } from '../lib/api-error.js';
+import { newestEpoch, storeSealedName } from '../lib/groupName.js';
 import { activeAdminIds, bumpGroupVersion, isAdmin, isMember, logActivity } from '../lib/groups.js';
 import { leaveGroup } from '../lib/leave.js';
 import { claimPlaceholder, restorePlaceholder, unclaimMember } from '../lib/members.js';
@@ -201,14 +208,8 @@ export async function membershipRoutes(app: FastifyInstance): Promise<void> {
       });
     }
 
-    const groupRows = await db
-      .select({ name: schema.groups.name })
-      .from(schema.groups)
-      .where(eq(schema.groups.id, groupId))
-      .limit(1);
-    const groupName = groupRows[0]?.name ?? 'your group';
     // The joiner has been waiting on this, so they are told directly.
-    notifyUsers([userId], groupName, 'join.approved', `/g/${groupId}`);
+    notifyUsers([userId], groupId, 'join.approved', `/g/${groupId}`);
     notifyGroup(groupId, userId, 'member.joined', `/g/${groupId}?tab=members`);
 
     // Membership alone gets them ciphertext. The approving client has to
@@ -332,18 +333,30 @@ export async function membershipRoutes(app: FastifyInstance): Promise<void> {
 
     const now = new Date();
     if (parsed.data.mint) {
+      const epochs = [...new Set(wraps.map((w) => w.epoch))];
+      // A mint is one epoch. The name below is sealed under *the* epoch being
+      // minted, and two at once would leave it ambiguous which — and nothing
+      // legitimate mints two: a rotation is always max + 1.
+      if (epochs.length !== 1) return reply.code(400).send({ error: 'invalid_input' });
+      const epoch = epochs[0]!;
       // First-writer-wins, decided here rather than by whichever request
       // happened to land last. Losing is not an error: the winner's key is
       // just as good, and the loser will pull it on its next sync.
       let claimed = false;
+      let named = false;
       await db.transaction(async (tx) => {
-        const epochs = [...new Set(wraps.map((w) => w.epoch))];
         const existing = await tx
           .select({ epoch: schema.groupKeys.epoch })
           .from(schema.groupKeys)
           .where(and(eq(schema.groupKeys.groupId, groupId), inArray(schema.groupKeys.epoch, epochs)))
           .for('update');
         if (existing.length > 0) return;
+        // Forward only. An epoch below the newest would be one nobody chains
+        // to and — were it to carry the name — one a from-today member does
+        // not hold. A stale client's rotation collides on the existing row
+        // above; this catches the one that skips backwards past a gap.
+        const newest = await newestEpoch(tx, groupId);
+        if (newest !== null && epoch <= newest) return;
         await tx
           .insert(schema.groupKeys)
           .values(
@@ -362,8 +375,15 @@ export async function membershipRoutes(app: FastifyInstance): Promise<void> {
             })),
           );
         claimed = true;
+        // The name re-sealed under the epoch just minted, in the same
+        // transaction: a member who holds only this epoch — which is what a
+        // from-today join produces — has no other key to read it with. Its
+        // absence is allowed, so a rotation that ends somebody's access is
+        // never held up by a device that could not open the name itself; the
+        // next sync from one that can repairs it.
+        if (parsed.data.name) named = await storeSealedName(tx, groupId, epoch, parsed.data.name);
       });
-      return { stored: claimed ? wraps.length : 0, skipped: 0, minted: claimed };
+      return { stored: claimed ? wraps.length : 0, skipped: 0, minted: claimed, named };
     }
 
     /**
@@ -449,6 +469,46 @@ export async function membershipRoutes(app: FastifyInstance): Promise<void> {
    *    which — a repeat call after a partial upload is an ordinary retry, not
    *    an error.
    */
+  /**
+   * Seal the group's name under its newest epoch (design §4.2).
+   *
+   * Two occasions. A group from before names were sealed still carries a
+   * readable one, and the first member to sync holding the newest epoch puts
+   * it under that key here. And a rotation went through without re-sealing
+   * the name — the device that minted held only a placeholder — so the name
+   * lags an epoch behind and a from-today member cannot read it until a
+   * member who can opens it and brings it forward.
+   *
+   * What the server checks is what it can: the caller is a member, the epoch
+   * named is the newest, and the caller actually holds a wrap for it. It
+   * cannot check that the blob says the group's name — that is trust within
+   * a group, exactly as rotation is, and a client keeps whatever it could
+   * last open rather than swapping in something it cannot.
+   */
+  app.post('/api/groups/:groupId/name', { preHandler: app.requireUser }, async (req, reply) => {
+    const { groupId } = req.params as { groupId: string };
+    const userId = req.user!.id;
+    if (!(await isMember(userId, groupId))) return reply.code(404).send({ error: 'not_found' });
+
+    const parsed = setGroupNameSchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'invalid_input' });
+    const { epoch, iv, ct } = parsed.data;
+
+    const newest = await newestEpoch(db, groupId);
+    if (newest === null || epoch !== newest) return reply.code(409).send({ error: 'not_newest_epoch' });
+    const held = await db
+      .select({ epoch: schema.groupKeys.epoch })
+      .from(schema.groupKeys)
+      .where(and(eq(schema.groupKeys.groupId, groupId), eq(schema.groupKeys.epoch, epoch), eq(schema.groupKeys.userId, userId)))
+      .limit(1);
+    if (held.length === 0) return reply.code(403).send({ error: 'epoch_not_held' });
+
+    // Losing the race is not an error: whoever won sealed the same name under
+    // the same key, and this caller pulls it back on its next sync.
+    const stored = await storeSealedName(db, groupId, epoch, { iv, ct });
+    return { stored };
+  });
+
   app.post('/api/groups/:groupId/key-commitments', { preHandler: app.requireUser }, async (req, reply) => {
     const { groupId } = req.params as { groupId: string };
     const userId = req.user!.id;
@@ -766,14 +826,8 @@ export async function membershipRoutes(app: FastifyInstance): Promise<void> {
     });
     if (!removed) return reply.code(404).send({ error: 'not_a_member' });
 
-    const groupRows = await db
-      .select({ name: schema.groups.name })
-      .from(schema.groups)
-      .where(eq(schema.groups.id, groupId))
-      .limit(1);
-    const groupName = groupRows[0]?.name ?? 'a group';
     // Being removed without being told is worse than the removal itself.
-    notifyUsers([userId], groupName, 'you.removed', '/');
+    notifyUsers([userId], groupId, 'you.removed', '/');
     notifyGroup(groupId, adminId, 'member.removed', `/g/${groupId}?tab=members`);
     return { status: 'removed' as const };
   });
@@ -847,12 +901,7 @@ export async function membershipRoutes(app: FastifyInstance): Promise<void> {
     if (!changed) return reply.code(404).send({ error: 'not_a_member' });
 
     if (role === 'admin') {
-      const groupRows = await db
-        .select({ name: schema.groups.name })
-        .from(schema.groups)
-        .where(eq(schema.groups.id, groupId))
-        .limit(1);
-      notifyUsers([userId], groupRows[0]?.name ?? 'your group', 'you.promoted', `/g/${groupId}?tab=members`);
+      notifyUsers([userId], groupId, 'you.promoted', `/g/${groupId}?tab=members`);
     }
     return { role };
   });

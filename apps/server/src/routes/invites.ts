@@ -38,7 +38,9 @@ export async function inviteRoutes(app: FastifyInstance): Promise<void> {
   });
 
   /**
-   * Public landing-page lookup: group name + inviter only, rate-limited.
+   * Public landing-page lookup: the inviter's name and the link's terms,
+   * rate-limited. Not the group's name — that is sealed, and the inviter's
+   * device put it in the link fragment for the landing page to read.
    *
    * A POST that reads nothing, for the same reason `/api/auth/params` is one:
    * a path parameter is logged. This one is worse than a username — the token
@@ -67,7 +69,6 @@ export async function inviteRoutes(app: FastifyInstance): Promise<void> {
       // twice in a group they have always been in.
       const mine = req.user ? claimable.find((c) => c.userId === req.user!.id) : undefined;
       return {
-        groupName: invite.groupName,
         inviterName: invite.inviterName,
         // Told up front, not discovered afterwards: a ledger you can only see
         // half of is something to accept knowingly (design §4.7).
@@ -147,7 +148,7 @@ export async function inviteRoutes(app: FastifyInstance): Promise<void> {
     ]);
     notifyUsers(
       admins,
-      invite.groupName,
+      invite.groupId,
       'join.requested',
       `/g/${invite.groupId}?tab=members`,
       actor[0]?.displayName ?? undefined,
@@ -174,7 +175,6 @@ async function findValidInvite(token: string) {
     .select({
       groupId: schema.invites.groupId,
       expiresAt: schema.invites.expiresAt,
-      groupName: schema.groups.name,
       inviterName: schema.users.displayName,
       shareHistory: schema.invites.shareHistory,
     })

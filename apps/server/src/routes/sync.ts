@@ -13,6 +13,7 @@ import { db, schema } from '../db/index.js';
 import { applyAttachmentDelete, applyAttachmentUpsert } from '../lib/attachments.js';
 import { applyCommentCreate } from '../lib/comments.js';
 import { applyGroupCreate, applyMemberAdd } from '../lib/create.js';
+import { newestEpoch } from '../lib/groupName.js';
 import { applyImportRecord, applyImportRevert } from '../lib/imports.js';
 import { applyExpenseDelete, applyExpenseUpsert } from '../lib/expenses.js';
 import { applyPaymentDelete, applyPaymentUpsert } from '../lib/payments.js';
@@ -248,18 +249,17 @@ async function collectGroupChanges(
    * taking the newest would let a hand-over look like a rotation and quietly
    * clear a departure that was never answered.
    */
-  const [{ mintedAt = null } = {}] = await db
-    .select({ mintedAt: sql<Date | null>`min(${schema.groupKeys.createdAt})` })
-    .from(schema.groupKeys)
-    .where(
-      and(
-        eq(schema.groupKeys.groupId, groupId),
-        eq(
-          schema.groupKeys.epoch,
-          sql`(select max(epoch) from ${schema.groupKeys} where group_id = ${groupId})`,
-        ),
-      ),
-    );
+  // The newest epoch anybody holds. Sent to the client as well: the name has
+  // to be sealed under it, and a client that sees the name lagging and holds
+  // this epoch is the one to bring it forward (see the `/name` route).
+  const latestEpoch = await newestEpoch(db, groupId);
+  const [{ mintedAt = null } = {}] =
+    latestEpoch === null
+      ? [{}]
+      : await db
+          .select({ mintedAt: sql<Date | null>`min(${schema.groupKeys.createdAt})` })
+          .from(schema.groupKeys)
+          .where(and(eq(schema.groupKeys.groupId, groupId), eq(schema.groupKeys.epoch, latestEpoch)));
   const [{ lastLeft = null } = {}] = await db
     .select({ lastLeft: sql<Date | null>`max(${schema.groupMembers.leftAt})` })
     .from(schema.groupMembers)
@@ -303,10 +303,18 @@ async function collectGroupChanges(
   return {
     group: {
       id: group.id,
-      name: group.name,
       defaultCurrency: group.defaultCurrency,
       version: group.version,
+      // Sealed under `nameEpoch`; the client opens it with that key. The
+      // readable copy travels only while no member has sealed it yet — the
+      // window every existing group is in until its first sync after this —
+      // and is what that member seals.
+      nameEpoch: group.nameEpoch,
+      nameIv: group.nameIv,
+      nameCt: group.nameCt,
+      name: group.nameCt === null ? group.name : null,
     },
+    latestEpoch,
     keys,
     keyCommitments,
     entryGrants: entryGrants.map((g) => ({

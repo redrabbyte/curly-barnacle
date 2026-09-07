@@ -34,9 +34,10 @@ ever asked.
 Notes for whoever writes it, not legal advice:
 
 - Who the controller is, and how to reach them.
-- What is stored. Note that expenses, payments, comments and receipt images are
-  end-to-end encrypted and unreadable to the operator, while usernames, display
-  names, group names, group membership, timestamps and entry sizes are not.
+- What is stored. Note that expenses, payments, comments, receipt images and
+  group names are end-to-end encrypted and unreadable to the operator, while
+  usernames, display names, group membership, timestamps and entry sizes are
+  not.
 - The lawful basis for each of those, and how long they are kept.
 - That a forgotten password destroys access to the encrypted data
   irrecoverably, because no recovery copy of the key exists.

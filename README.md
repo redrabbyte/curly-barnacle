@@ -85,17 +85,24 @@ Optional integrations (see `apps/server/.env.example`):
 
 ## Encryption
 
-Expenses, payments, comments and receipt images never reach the server
-readable. The password derives a master key on the device (Argon2id); that
-splits into an auth key the server does verify and a wrapping key that never
-leaves. Each group has a key per *epoch*, wrapped to each member's X25519
+Expenses, payments, comments, receipt images and group names never reach the
+server readable. The password derives a master key on the device (Argon2id);
+that splits into an auth key the server does verify and a wrapping key that
+never leaves. Each group has a key per *epoch*, wrapped to each member's X25519
 public key, and every entity is sealed with AES-GCM bound to its own id, group
 and epoch.
 
 A database dump, a stolen backup or a curious operator
 reading tables gets ciphertext. What stays readable is the metadata the server
-must route on: group names, who is in which group, entry counts, sizes and
-timestamps.
+must route on: who is in which group, entry counts, sizes and timestamps.
+
+The group name is sealed under the group's newest epoch key and re-sealed at
+every rotation, so a member admitted from today onwards can still read it. Two
+things used to need it readable and now do without: the invite landing page
+gets the name from the link itself (the inviting device writes it into the
+fragment beside the token, which never reaches a server), and a push
+notification names the group by id and the device titles it from its own
+mirror.
 
 Two things anchor a key to a person rather than to whatever the server hands
 over. On a join, the digits both sides read aloud authenticate the joiner's
@@ -143,6 +150,14 @@ grep -i 'a description you know is in there' /tmp/check.sql   # must find nothin
 
 `pnpm --filter server test` pins the sealed tables to explicit column lists, so
 a plaintext column reappearing fails in CI rather than in the dump.
+
+**Existing groups** still hold a readable name after migration 0009 until a
+member syncs: the first member holding the group's newest key seals it and the
+readable column is nulled in the same write. Once
+`select id from groups where name_ct is null` comes back empty, run the
+follow-up described at the top of that migration file, which makes the sealed
+columns required and drops the readable one. Old backups keep the old names;
+nothing can take those back.
 
 ## Schema changes
 

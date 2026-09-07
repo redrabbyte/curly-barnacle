@@ -104,17 +104,26 @@ test('a malformed username says so, and says what a username may hold', async ({
 });
 
 test('deleting says what it will destroy before asking for the password', async ({ page, api }) => {
+  // The server lists the groups by id — their names are sealed there — and
+  // the app names them from its own mirror, so both have to be in it.
+  const FLAT = '44444444-4444-4444-8444-444444444441';
+  const TRIP = '44444444-4444-4444-8444-444444444442';
+  const me = { userId: ME.id, displayName: ME.displayName, isPlaceholder: false, role: 'admin' as const };
+  seedGroup(api, FLAT, 'Flat', [me]);
+  seedGroup(api, TRIP, 'Trip', [me]);
   api.deletionPreview = [
-    { groupId: 'g1', name: 'Flat', willBeDeleted: true, willPromoteAnAdmin: false, orphanedEpochs: [] },
-    { groupId: 'g2', name: 'Trip', willBeDeleted: false, willPromoteAnAdmin: true, orphanedEpochs: [0] },
+    { groupId: FLAT, members: 1, willBeDeleted: true, willPromoteAnAdmin: false, orphanedEpochs: [] },
+    { groupId: TRIP, members: 2, willBeDeleted: false, willPromoteAnAdmin: true, orphanedEpochs: [0] },
   ];
   await signIn(page);
+  await page.getByText('Flat').waitFor();
   await openSettings(page);
   await page.getByRole('button', { name: 'Delete my account' }).click();
 
   // The three consequences someone cannot be expected to work out themselves.
-  await expect(page.getByText(/last member of this group/)).toBeVisible();
-  await expect(page.getByText('Flat')).toBeVisible();
+  const dialog = page.locator('.fixed', { has: page.getByRole('heading', { name: 'Delete your account' }) });
+  await expect(dialog.getByText(/last member of this group/)).toBeVisible();
+  await expect(dialog.getByText('Flat')).toBeVisible();
   await expect(page.getByText(/only person who can read part of the history/)).toBeVisible();
   await expect(page.getByText(/longest-standing member/)).toBeVisible();
   expect(api.deleted).toBe(false);

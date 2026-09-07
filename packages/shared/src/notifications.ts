@@ -2,11 +2,12 @@
  * What a push notification is *about*, rather than what it says.
  *
  * The server used to compose the sentence, which meant it decided the reader's
- * language — and it has no idea what that is. It sends a kind plus the names
- * involved now, and the service worker writes the words in whatever language
- * the reader chose. Nothing new is revealed: the group and actor names were
- * already in the payload, and everything about the entry itself is still
- * absent by design (§3.3).
+ * language — and it has no idea what that is. It sends a kind plus the actor's
+ * name now, and the service worker writes the words in whatever language the
+ * reader chose. The group is named by id: its name is sealed, so the server
+ * cannot say it, and the device that shows the notification holds it opened
+ * in the mirror. Everything about the entry itself is still absent by design
+ * (§3.3).
  */
 export const NOTIFICATION_KINDS = [
   'expense.saved',
@@ -43,8 +44,13 @@ export interface PushEntry {
  */
 export interface PushPayload {
   kind: NotificationKind;
-  /** Group name — the notification title. */
-  group: string;
+  /**
+   * Which group. The title is its name, which only the device can supply: it
+   * is sealed on the server and opened in the mirror, so the worker looks it
+   * up by this id and falls back to something generic when it has never held
+   * the group.
+   */
+  groupId: string;
   /** Who did it, for the kinds that name somebody. */
   actor?: string;
   /** In-app path the notification opens. */

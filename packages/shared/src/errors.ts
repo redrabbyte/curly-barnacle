@@ -48,6 +48,10 @@ export const API_ERRORS = [
   'not_a_placeholder',
   'no_wraps_for_members',
   'no_entries_in_group',
+  // Sealing the group name: it has to go under the newest epoch, and only a
+  // member holding that epoch can have sealed it.
+  'not_newest_epoch',
+  'epoch_not_held',
 
   // invites
   'invite_invalid',

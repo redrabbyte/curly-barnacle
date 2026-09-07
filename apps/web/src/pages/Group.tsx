@@ -13,6 +13,7 @@ import { BalancesTab } from '../components/BalancesTab';
 import { ChartsTab } from '../components/ChartsTab';
 import { ActivityTab } from '../components/ActivityTab';
 import { InviteLink } from '../components/InviteLink';
+import { inviteFragment } from '../inviteToken';
 import { HistoryGap } from '../components/HistoryGap';
 import { ImportDialog } from '../components/ImportDialog';
 import { InvalidEntries } from '../components/InvalidEntries';
@@ -110,11 +111,17 @@ export function GroupPage() {
     setInviteError(null);
     setInviteOpen(false);
     try {
-      const res = await api<{ path: string }>(`/api/groups/${groupId}/invites`, {
+      const res = await api<{ token: string; path: string }>(`/api/groups/${groupId}/invites`, {
         method: 'POST',
         body: { shareHistory },
       });
-      setInviteUrl(`${location.origin}${res.path}`);
+      // The group's name goes into the fragment beside the token (design
+      // §4.2). The server holds it sealed and cannot put it on the landing
+      // page, and the stranger following the link holds no key — so the one
+      // device that has both the link and the name opened writes it in. A
+      // fragment never reaches a server, which is why the token is there too.
+      const fragment = group && group.name !== '' ? inviteFragment(res.token, group.name) : res.token;
+      setInviteUrl(`${location.origin}/invite#${fragment}`);
       setInviteScoped(!shareHistory);
     } catch (err) {
       setInviteError((err as Error).message); // e.g. offline — invites need the server
@@ -130,7 +137,7 @@ export function GroupPage() {
   return (
     <div className="flex flex-col gap-4">
       <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold">{group.name}</h1>
+        <h1 className="text-xl font-semibold">{group.name === '' ? t('group.awaitingKeys') : group.name}</h1>
         <span className="flex gap-3 text-sm">
           <button
             onClick={() =>

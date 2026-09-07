@@ -4,6 +4,7 @@ import {
   type ActivityDto,
   type AttachmentDto,
   type ExpenseDto,
+  type GroupDto,
   type Mutation,
   type PaymentDto,
   type SyncResponse,
@@ -26,6 +27,7 @@ import {
   rotateGroupKey,
 } from './groupKeys';
 import { localDb, type OutboxItem } from './db';
+import { resolveGroupName, sealGroupName, sealLegacyGroupCreate, shouldBackfillName } from './groupName';
 import { resealMutation } from './reseal';
 import { uuid } from './uuid';
 import { AppError } from './i18n/errors';
@@ -247,7 +249,25 @@ export async function syncNow(): Promise<void> {
 
     const opened = new Map<string, ExpenseDto[]>();
     const openedPayments = new Map<string, PaymentDto[]>();
+    const groupRows = new Map<string, GroupDto>();
     for (const [groupId, ch] of Object.entries(res.changes)) {
+      // The name is sealed like the entries and opened into the mirror the
+      // same way (design §4.2). What the mirror already holds is the fallback
+      // for a key that has not arrived, so a group never loses a name it had.
+      const previous = await localDb.groups.get(groupId);
+      const named = await resolveGroupName(ch.group, previous, (e) => keyForEpoch(groupId, e));
+      groupRows.set(groupId, {
+        id: ch.group.id,
+        defaultCurrency: ch.group.defaultCurrency,
+        version: ch.group.version,
+        ...named,
+      });
+      // A name the server holds readable, or under an older epoch than the
+      // newest, is this device's to seal if it can write under the newest —
+      // best effort, off the sync's critical path, once per epoch.
+      if (shouldBackfillName(named, ch.group.nameEpoch, ch.latestEpoch, await currentEpoch(groupId))) {
+        void backfillGroupName(groupId, named.name, ch.latestEpoch!);
+      }
       // Epochs whose ciphertext turned up with no key to open it. Recorded so
       // every total derived from what is left can say it is partial.
       const missing = new Set<number>();
@@ -279,11 +299,16 @@ export async function syncNow(): Promise<void> {
         localDb.activity,
         localDb.cursors,
         localDb.groupKeys,
+        localDb.pendingNames,
       ],
       async () => {
         const seenGroups = new Set(Object.keys(res.changes));
         for (const [groupId, ch] of Object.entries(res.changes)) {
-          await localDb.groups.put(ch.group);
+          const row = groupRows.get(groupId)!;
+          await localDb.groups.put(row);
+          // The name from the invite link has done its one job once the real
+          // one is open.
+          if (row.nameEpoch !== null) await localDb.pendingNames.delete(groupId);
           for (const m of ch.members) await localDb.members.put(m); // leftAt kept: history stays readable
           for (const e of opened.get(groupId) ?? []) {
             if (!pendingExpenseIds.has(e.id)) await localDb.expenses.put(e);
@@ -312,6 +337,7 @@ export async function syncNow(): Promise<void> {
           await localDb.activity.where('groupId').equals(g.id).delete();
           await localDb.groupKeys.delete(g.id);
           await localDb.cursors.delete(g.id);
+          await localDb.pendingNames.delete(g.id);
           forgetGroupKeys(g.id);
         }
       },
@@ -690,6 +716,19 @@ async function freshenQueuedEpochs(outbox: OutboxItem[]): Promise<void> {
   for (const item of outbox) {
     const groupId = (item.mutation as { groupId?: string }).groupId;
     if (!groupId || item.seq === undefined) continue;
+
+    // A group created by the app before names were sealed is still in the
+    // queue with its name readable. Sealed here, under the epoch 0 this
+    // device minted for it, before it can leave (design §6).
+    if (item.mutation.type === 'group.create') {
+      const sealed = await sealLegacyGroupCreate(item.mutation, (e) => keyForEpoch(groupId, e));
+      if (sealed) {
+        await localDb.outbox.update(item.seq, { mutation: sealed });
+        item.mutation = sealed;
+      }
+      continue;
+    }
+
     const now = await currentEpoch(groupId);
     if (now === null) continue;
 
@@ -706,6 +745,32 @@ async function freshenQueuedEpochs(outbox: OutboxItem[]): Promise<void> {
       }
     });
     item.mutation = next; // the batch about to be sent, not the one we read
+  }
+}
+
+/** Names this device has offered the server this session, by group and epoch, so an answer is not asked for again every six seconds. */
+const backfilledNames = new Set<string>();
+
+/**
+ * Seal the group's name under its newest epoch and hand it to the server
+ * (design §4.2). First writer wins there; losing means another member did
+ * the same thing with the same name and the same key, and the next pull
+ * brings it back. Never allowed to break the sync it rode in on.
+ */
+async function backfillGroupName(groupId: string, name: string, epoch: number): Promise<void> {
+  const mark = `${groupId}:${epoch}`;
+  if (backfilledNames.has(mark)) return;
+  backfilledNames.add(mark);
+  try {
+    const key = await keyForEpoch(groupId, epoch);
+    if (!key) return;
+    const sealed = await sealGroupName(groupId, epoch, key, name);
+    await api(`/api/groups/${groupId}/name`, { method: 'POST', body: { epoch, ...sealed } });
+  } catch (err) {
+    // The server answered — the epoch moved on, or somebody else got there —
+    // and the next pull says which, so asking again for this epoch is noise.
+    // Anything else is the network, and the offer stands for the next sync.
+    if (!(err instanceof ApiError)) backfilledNames.delete(mark);
   }
 }
 
@@ -757,17 +822,20 @@ export async function createGroupLocal(
   const id = uuid();
   const { key, wrapped } = await mintGroupKey();
   await adoptGroupKey(id, 0, key);
+  // Under the key just minted, so the server never sees the name readable —
+  // not even in the one mutation that brings the group into existence.
+  const sealedName = await sealGroupName(id, 0, key, name);
 
   const mutation: Mutation = {
     id: uuid(),
     v: MUTATION_SCHEMA_VERSION,
     type: 'group.create',
     groupId: id,
-    data: { id, name, defaultCurrency, wrappedKey: wrapped },
+    data: { id, name: sealedName, defaultCurrency, wrappedKey: wrapped },
     clientTs: new Date().toISOString(),
   };
   await localDb.transaction('rw', [localDb.groups, localDb.members, localDb.outbox], async () => {
-    await localDb.groups.put({ id, name, defaultCurrency, version: 0 });
+    await localDb.groups.put({ id, name, defaultCurrency, version: 0, nameEpoch: 0 });
     // The creator is the first admin here as well as server-side, or the
     // members tab would offer them nothing until the first sync landed.
     await localDb.members.put({

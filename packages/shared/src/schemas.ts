@@ -45,6 +45,25 @@ export const kdfParamsSchema = z.object({
 export const sealedSchema = z.object({ iv: b64url(32), ct: b64url(4096) });
 
 /**
+ * A group's name, sealed under one of its epoch keys. The bound is what a
+ * 120-character name padded to the 512-byte bucket comes out at in base64url,
+ * with the tag: nothing a client can send is longer without lying about it.
+ */
+export const sealedNameSchema = z.object({ iv: b64url(32), ct: b64url(768) });
+
+/**
+ * Sealing a group's name under its newest epoch: the backfill for a group from
+ * before names were sealed, and the repair when a rotation went through
+ * without one. The server checks the epoch is the newest and that the caller
+ * holds it, and never reads the rest.
+ */
+export const setGroupNameSchema = z.object({
+  epoch: z.number().int().min(0).max(100_000),
+  iv: b64url(32),
+  ct: b64url(768),
+});
+
+/**
  * What a client uploads once it has derived its keys. `authKey` is the only
  * half the server ever sees; the KEK that unwraps `wrappedPrivateKey` never
  * leaves the device, and no field here lets the server reconstruct it.
@@ -127,6 +146,14 @@ export const publishKeysSchema = z.object({
    * other out, so the server decides who won.
    */
   mint: z.boolean().optional(),
+  /**
+   * The group's name re-sealed under the epoch being minted. Only meaningful
+   * with `mint`, and then expected: a member admitted on this epoch alone has
+   * no other key to read the name with. Optional all the same, because a
+   * device that holds only a placeholder for the name has nothing to seal,
+   * and a rotation that ends somebody's access must not wait on it.
+   */
+  name: z.object({ iv: b64url(32), ct: b64url(768) }).optional(),
   wraps: z
     .array(
       z

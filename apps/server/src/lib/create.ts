@@ -19,7 +19,8 @@ export async function applyGroupCreate(
   userId: string,
   input: {
     id: string;
-    name: string;
+    /** Sealed under epoch 0, the key in `wrappedKey`. Stored unread. */
+    name: { iv: string; ct: string };
     defaultCurrency: string;
     wrappedKey: { epk: string; iv: string; ct: string };
   },
@@ -42,7 +43,13 @@ export async function applyGroupCreate(
   await db.transaction(async (tx) => {
     await tx.insert(schema.groups).values({
       id: input.id,
-      name: input.name,
+      // Under epoch 0, which is minted in the same transaction below: the
+      // creator held it before they could seal anything, and it is the only
+      // epoch there is until somebody rotates.
+      name: null,
+      nameEpoch: 0,
+      nameIv: input.name.iv,
+      nameCt: input.name.ct,
       defaultCurrency: input.defaultCurrency,
       createdBy: userId,
       createdAt: now,
@@ -76,7 +83,9 @@ export async function applyGroupCreate(
       type: 'group.created',
       entityType: 'group',
       entityId: input.id,
-      payload: { name: input.name, defaultCurrency: input.defaultCurrency },
+      // No name: the payload is readable and the name is not. The feed says
+      // "created the group" and never needed it.
+      payload: { defaultCurrency: input.defaultCurrency },
     });
     if (mutationId) {
       await tx.insert(schema.processedMutations).values({ mutationId, userId, createdAt: now });

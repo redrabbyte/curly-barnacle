@@ -17,6 +17,7 @@ import {
 } from '@spendapp/shared';
 import { api } from './api';
 import { localDb } from './db';
+import { nameForMint } from './groupName';
 import { loadKeys } from './keys';
 import { cachedUserId } from './session';
 import { AppError } from './i18n/errors';
@@ -521,11 +522,18 @@ export async function rotateGroupKey(groupId: string): Promise<{ epoch: number; 
       chainCt,
     })),
   );
+  // The group's name, re-sealed under the epoch being minted and sent with
+  // it (design §4.2): whoever is admitted on this epoch alone — which is what
+  // a from-today join produces — has no other key to read the name with.
+  // Absent when this device holds only a placeholder for it; the rotation
+  // goes ahead regardless, and a member who can open the name brings it
+  // forward on their next sync.
+  const name = await nameForMint(groupId, epoch, key, await localDb.groups.get(groupId));
   // mint: two admins removing people at once must not both claim this epoch,
   // or one group would end up with two different keys for the same number.
   const res = await api<{ minted: boolean }>(`/api/groups/${groupId}/keys`, {
     method: 'POST',
-    body: { mint: true, wraps },
+    body: { mint: true, wraps, ...(name ? { name } : {}) },
   });
   if (res.minted) await adoptGroupKey(groupId, epoch, key);
   return { epoch, wrapped: res.minted ? wraps.length : 0 };

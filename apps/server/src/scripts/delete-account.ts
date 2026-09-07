@@ -59,7 +59,8 @@ async function main(username: string): Promise<number> {
         g.willPromoteAnAdmin && 'the longest-standing member becomes admin',
         g.orphanedEpochs.length > 0 && 'part of its history becomes unreadable to everyone, for good',
       ].filter(Boolean);
-      console.log(`  ${g.name}${notes.length ? `\n    ${notes.join('\n    ')}` : ''}`);
+      // By id: the name is sealed, and this server cannot open it.
+      console.log(`  ${g.groupId} (${g.members} member${g.members === 1 ? '' : 's'})${notes.length ? `\n    ${notes.join('\n    ')}` : ''}`);
     }
   }
 

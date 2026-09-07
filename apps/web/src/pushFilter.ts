@@ -4,6 +4,7 @@ import {
   type ExpenseDto,
   type PaymentDto,
   type PushEntry,
+  type PushPayload,
   type SyncResponse,
 } from '@spendapp/shared';
 import { api } from './api';
@@ -252,10 +253,9 @@ export function involvementFrom(
   return 'theirs';
 }
 
-/** The decision, with every uncertain path collapsing onto `unknown`. */
-export async function involvementOf(entry: PushEntry): Promise<Involvement> {
+/** The decision, with every uncertain path collapsing onto `unknown`. Expects the database open. */
+async function involvementOf(entry: PushEntry): Promise<Involvement> {
   try {
-    await openDb();
     const me = await readerId();
     if (!me) return 'unknown';
     const resolve = await resolverFor(entry.groupId);
@@ -273,13 +273,59 @@ export async function involvementOf(entry: PushEntry): Promise<Involvement> {
     // Offline, signed out, a key this device was never given, a server that
     // said no. None of them are reasons to stay quiet about somebody's money.
     return 'unknown';
+  }
+}
+
+/**
+ * What the group is called, as this device holds it (design §4.2).
+ *
+ * The server sends the group's id and nothing else about it: the name is
+ * sealed there, and opened here into the mirror. Two rows can answer. The
+ * mirror's, for a group this device is in — still there for a moment after
+ * being removed, since only the next sync takes it away — and the one the
+ * invite page put aside for a group this account has asked into and not yet
+ * been handed a key for. Null when neither says, and the caller falls back.
+ */
+async function mirrorGroupName(groupId: string): Promise<string | null> {
+  try {
+    const held = await localDb.groups.get(groupId);
+    if (held && held.name !== '') return held.name;
+    return (await localDb.pendingNames.get(groupId))?.name ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** Everything the worker needs from storage to word one notification. */
+export interface PushDescription {
+  /** `unknown` when no entry was asked about, as much as when it could not be decided. */
+  involvement: Involvement;
+  groupName: string | null;
+}
+
+/**
+ * Both lookups inside one hold on the database. The worker borrows the
+ * database and gives it straight back (see `openDb`), so two separate
+ * borrowers would race each other's release — and the name, being one read
+ * from the mirror, costs nothing next to the pull the involvement takes.
+ * `entry` is asked about only when the caller passes one: the kinds without
+ * a quiet form never need the answer.
+ */
+export async function describePush(payload: Pick<PushPayload, 'groupId'>, entry?: PushEntry): Promise<PushDescription> {
+  try {
+    await openDb();
+    const groupName = payload.groupId ? await mirrorGroupName(payload.groupId) : null;
+    const involvement = entry ? await involvementOf(entry) : 'unknown';
+    return { involvement, groupName };
+  } catch {
+    return { involvement: 'unknown', groupName: null };
   } finally {
     releaseDb();
   }
 }
 
 /**
- * The decision, or `unknown` if it takes too long.
+ * The description, or the loud default if it takes too long.
  *
  * The push handler is on a clock it does not control: the browser will draw
  * its own "this site was updated in the background" notification if
@@ -287,13 +333,17 @@ export async function involvementOf(entry: PushEntry): Promise<Involvement> {
  * is a worse notification than the one this is trying to improve. So the wait
  * is bounded well inside that, and a slow answer is no answer.
  */
-export async function involvementWithin(entry: PushEntry, ms = DEADLINE_MS): Promise<Involvement> {
+export async function describePushWithin(
+  payload: Pick<PushPayload, 'groupId'>,
+  entry?: PushEntry,
+  ms = DEADLINE_MS,
+): Promise<PushDescription> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     return await Promise.race([
-      involvementOf(entry),
-      new Promise<Involvement>((resolve) => {
-        timer = setTimeout(() => resolve('unknown'), ms);
+      describePush(payload, entry),
+      new Promise<PushDescription>((resolve) => {
+        timer = setTimeout(() => resolve({ involvement: 'unknown', groupName: null }), ms);
       }),
     ]);
   } finally {

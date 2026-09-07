@@ -117,6 +117,20 @@ interface Preview {
   groups: { groupId: string; name: string; willBeDeleted: boolean; willPromoteAnAdmin: boolean; orphanedEpochs: number[] }[];
 }
 
+/**
+ * The server lists the groups by id: their names are sealed, and it cannot
+ * open one. This device can, so the names come from the mirror, and a group
+ * it has never opened the name of is shown by the front of its id.
+ */
+async function nameGroups<T extends { groupId: string }>(groups: T[]): Promise<(T & { name: string })[]> {
+  const rows = await localDb.groups.bulkGet(groups.map((g) => g.groupId));
+  return groups.map((g, i) => {
+    const held = rows[i];
+    const name = held && held.name !== '' ? held.name : g.groupId.slice(0, 8);
+    return { ...g, name };
+  });
+}
+
 export function DeleteAccount() {
   const t = useT();
   const { user, setUser } = useAuth();
@@ -128,7 +142,8 @@ export function DeleteAccount() {
   async function openDialog() {
     setError(null);
     try {
-      setPreview(await api<Preview>('/api/me/deletion-preview'));
+      const res = await api<{ groups: Omit<Preview['groups'][number], 'name'>[] }>('/api/me/deletion-preview');
+      setPreview({ groups: await nameGroups(res.groups) });
     } catch (err) {
       setError((err as Error).message);
     }

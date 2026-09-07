@@ -87,7 +87,12 @@ export const UNTOUCHED_BY_DELETION = [
 
 export interface DeletionPreviewGroup {
   groupId: string;
-  name: string;
+  /**
+   * How many people with accounts are in it, this one included. The name is
+   * sealed, so this is what the server can offer to tell one group from
+   * another; the app names them from its own mirror.
+   */
+  members: number;
   willBeDeleted: boolean;
   willPromoteAnAdmin: boolean;
   orphanedEpochs: number[];
@@ -100,13 +105,13 @@ export interface DeletionPreviewGroup {
  */
 export async function deletionPreview(userId: string): Promise<DeletionPreviewGroup[]> {
   const mine = await db
-    .select({ groupId: schema.groupMembers.groupId, name: schema.groups.name, role: schema.groupMembers.role })
+    .select({ groupId: schema.groupMembers.groupId, role: schema.groupMembers.role })
     .from(schema.groupMembers)
     .innerJoin(schema.groups, eq(schema.groups.id, schema.groupMembers.groupId))
     .where(and(eq(schema.groupMembers.userId, userId), isNull(schema.groupMembers.leftAt)));
 
   return Promise.all(
-    mine.map(async ({ groupId, name, role }) => {
+    mine.map(async ({ groupId, role }) => {
       const others = await db
         .select({
           userId: schema.groupMembers.userId,
@@ -146,7 +151,7 @@ export async function deletionPreview(userId: string): Promise<DeletionPreviewGr
       const willBeDeleted = realOthers.length === 0;
       return {
         groupId,
-        name,
+        members: realOthers.length + 1,
         willBeDeleted,
         // Somebody has to be able to approve joins afterwards.
         willPromoteAnAdmin: !willBeDeleted && role === 'admin' && !realOthers.some((m) => m.role === 'admin'),

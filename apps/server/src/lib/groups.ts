@@ -49,7 +49,7 @@ export async function activeAdminIds(groupId: string): Promise<string[]> {
   return rows.map((r) => r.userId);
 }
 
-type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
+export type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
 
 /**
  * Bump the group's change counter inside a transaction and return the new

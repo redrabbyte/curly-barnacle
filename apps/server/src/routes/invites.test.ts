@@ -117,11 +117,15 @@ d('invites', () => {
     expect(row!.tokenHash).toBe(sha256(token));
   });
 
-  it('still resolves a link that was handed out', async () => {
+  it('still resolves a link that was handed out, and never says the group name', async () => {
     const token = await createInvite();
     const res = await lookup(token);
     expect(res.statusCode).toBe(200);
-    expect((res.json() as { groupName: string }).groupName).toBe('Paris trip');
+    const body = res.json() as { inviterName: string; groupName?: unknown };
+    expect(body.inviterName).toBe('Ada');
+    // The name is sealed; the link the inviter handed out carries it instead.
+    expect(body).not.toHaveProperty('groupName');
+    expect(JSON.stringify(body)).not.toContain('Paris trip');
   });
 
   it('resolves a row written before the tokens were hashed', async () => {

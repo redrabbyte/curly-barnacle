@@ -38,6 +38,8 @@ const KEYS: Record<ApiErrorCode, MessageKey> = {
   not_a_placeholder: 'error.not_a_placeholder',
   no_wraps_for_members: 'error.no_wraps_for_members',
   no_entries_in_group: 'error.no_entries_in_group',
+  not_newest_epoch: 'error.not_newest_epoch',
+  epoch_not_held: 'error.epoch_not_held',
   invite_invalid: 'error.invite_invalid',
   invite_spent: 'error.invite_spent',
   join_declined: 'error.join_declined',
