@@ -32,6 +32,24 @@ export default defineConfig({
       filename: 'sw.ts',
       registerType: 'prompt',
       injectManifest: {
+        /**
+         * The images too, not only the bundle.
+         *
+         * The default patterns are js/css/html, and the plugin adds whatever
+         * the webmanifest names on top — which covers the app icons and misses
+         * `badge-96.png` entirely, because nothing links to it. It is fetched
+         * by the *platform*, when a push arrives, to draw the status-bar icon.
+         *
+         * Left out of the precache, that fetch has to reach the network at the
+         * moment a notification is drawn, which is exactly the moment a phone
+         * is least likely to be on one. When it fails nothing errors: Android
+         * quietly substitutes its own generic glyph — a bell — and the app
+         * looks like it chose a bell instead of its own mark.
+         */
+        // Named on its own rather than by widening the patterns to `png`: the
+        // app icons are already precached because the webmanifest names them,
+        // and globbing them again lists each of them twice.
+        globPatterns: ['**/*.{js,css,html}', 'badge-96.png'],
         // The QR decoder is 128 KiB and lazily imported so that only an admin
         // who opens the scanner pays for it — but precaching it handed that
         // cost straight back, to everyone, on every service-worker install.
