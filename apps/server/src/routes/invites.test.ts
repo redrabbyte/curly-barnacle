@@ -216,6 +216,82 @@ d('invites', () => {
     }
   });
 
+  /**
+   * What the landing page asks before it draws anything. Following the same
+   * link twice is the ordinary case — the message it came in stays in the
+   * chat — and the page used to answer all of these with the join screen,
+   * alias picker and all, even though pressing the button could only ever
+   * repeat what had already happened.
+   */
+  describe('says what the link can still do for whoever is asking', () => {
+    const state = async (token: string, headers?: Record<string, string>) => {
+      const res = await app!.inject({
+        method: 'POST',
+        url: '/api/invites/lookup',
+        headers: { 'x-requested-with': 'spendapp', ...headers },
+        payload: { token },
+      });
+      expect(res.statusCode).toBe(200);
+      return res.json() as { state: string; groupId: string | null; claimable: unknown[] };
+    };
+
+    it('is open to a stranger while the one use is still there', async () => {
+      const token = await createInvite();
+      expect((await state(token)).state).toBe('open');
+      expect((await state(token, await asUser(JOINER))).state).toBe('open');
+    });
+
+    it('tells the joiner their request is already waiting, not that the link is gone', async () => {
+      const token = await createInvite();
+      const joiner = await asUser(JOINER);
+      await join(token, joiner);
+
+      const second = await state(token, joiner);
+      expect(second.state).toBe('pending');
+      // The group they are waiting on: the page re-derives the confirmation
+      // digits from it, so a second visit reads out the same ones.
+      expect(second.groupId).toBe(GROUP);
+    });
+
+    it('tells a member they are already in, and which group to open', async () => {
+      const token = await createInvite();
+      const admin = await asUser(ADMIN);
+      const seen = await state(token, admin);
+      expect(seen.state).toBe('joined');
+      expect(seen.groupId).toBe(GROUP);
+      // Nothing to pick: they are in the group, and offering to take over a
+      // name is what made a second visit look like it did something.
+      expect(seen.claimable).toEqual([]);
+    });
+
+    it('tells a third party the link is spent, before they press anything', async () => {
+      const token = await createInvite();
+      await join(token, await asUser(JOINER));
+
+      // The whole point: this is what somebody the link was forwarded to sees,
+      // instead of a join screen ending in a 410.
+      expect((await state(token, await asUser(OTHER))).state).toBe('spent');
+      expect((await state(token)).state).toBe('spent');
+      // Never the group id — a forwarded link should give away no more than it
+      // already has.
+      expect((await state(token, await asUser(OTHER))).groupId).toBeNull();
+    });
+
+    it('keeps a decline final rather than softening it into "already used"', async () => {
+      const token = await createInvite();
+      const joiner = await asUser(JOINER);
+      await join(token, joiner);
+      await db
+        .update(schema.joinRequests)
+        .set({ status: 'rejected', decidedBy: ADMIN, decidedAt: new Date() })
+        .where(and(eq(schema.joinRequests.groupId, GROUP), eq(schema.joinRequests.userId, JOINER)));
+
+      expect((await state(token, joiner)).state).toBe('declined');
+      // And still the truth for everybody else: the use is gone either way.
+      expect((await state(token, await asUser(OTHER))).state).toBe('spent');
+    });
+  });
+
   it('keeps the join request pointing at its invite', async () => {
     const token = await createInvite();
     await join(token, await asUser(JOINER));

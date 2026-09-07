@@ -200,6 +200,35 @@ export const inviteJoinSchema = z.object({
 });
 
 /**
+ * What an invite link can still do *for whoever is asking* — the landing
+ * page's whole answer to being opened twice.
+ *
+ * A link is a one-shot capability, but the message it arrived in is not: people
+ * scroll back and tap it again, and the page used to have nothing to go on, so
+ * it drew the join screen — alias picker included — for all five of these. The
+ * picker was inert by then (`/api/invites/join` returns the existing request
+ * rather than rewriting it), which is worse than useless: it offers a choice
+ * that has already been made.
+ *
+ * Shared so the two sides cannot drift. The client renders one screen per
+ * state and the union makes a missed one a compile error rather than a blank
+ * page in front of somebody holding a link that will not work.
+ *
+ *  - `open`     — unspent, and the caller has no standing request. Join.
+ *  - `pending`  — the caller has already asked; an admin has not decided.
+ *  - `joined`   — the caller is already in the group. Open it.
+ *  - `declined` — the caller asked and was turned down. Final for this account.
+ *  - `spent`    — the one use is gone, and it was not the caller who spent it.
+ *
+ * Order matters when more than one could be said: what is true of the caller
+ * beats what is true of the link, so the person who used it is never told
+ * their own link was taken by somebody else.
+ */
+export const INVITE_STATES = ['open', 'pending', 'joined', 'declined', 'spent'] as const;
+
+export type InviteState = (typeof INVITE_STATES)[number];
+
+/**
  * Recording what an epoch's key really was, sealed under the caller's own KEK
  * (design §4.2).
  *

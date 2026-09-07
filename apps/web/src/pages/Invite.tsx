@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { deriveSas, formatSas, sha256Hex } from '@spendapp/shared';
+import type { InviteState } from '@spendapp/shared';
 import { api } from '../api';
 import { useAuth } from '../auth';
 import { localDb } from '../db';
@@ -25,6 +26,13 @@ interface InviteInfo {
   claimable: Claimable[];
   /** Set when this account was in the group before and left (design §5). */
   wasMember?: { userId: string; displayName: string } | null;
+  /**
+   * What the link can still do for whoever is asking. Optional so a client
+   * running against a server that predates it behaves exactly as it used to.
+   */
+  state?: InviteState;
+  /** Only for `joined` and `pending` — the two the server has confirmed. */
+  groupId?: string | null;
 }
 
 /** '' means "join as a new member" rather than taking over a placeholder. */
@@ -90,6 +98,49 @@ export function InvitePage() {
       .catch((err: Error) => setError(err.message));
   }, [token]);
 
+  /**
+   * Following the same link twice is the ordinary case, not the odd one: the
+   * message it arrived in stays in the chat, and people tap it again to check
+   * whether anything happened. The server now says what the link can still do
+   * for this account, and everything except "you may join" is handled here
+   * rather than left to a button that would have been inert.
+   */
+  useEffect(() => {
+    if (!info || !token) return;
+    const state = info.state ?? 'open';
+    // Nothing left to spend, whichever of these it is. Clearing the stash
+    // matters most on a shared browser, where the next person at this tab
+    // would otherwise inherit whatever the link still carried.
+    if (state !== 'open') clearInviteToken();
+    if (state === 'joined' && info.groupId) {
+      const groupId = info.groupId;
+      // Sync first, exactly as the join path does: arriving at a group the
+      // mirror has never heard of shows an empty screen for as long as the
+      // pull takes. A failure here is not a reason to strand them on a
+      // landing page for a group they are already in.
+      void syncNow()
+        .catch(() => {})
+        .then(() => navigate(`/g/${groupId}`, { replace: true }));
+      return;
+    }
+    if (state === 'pending' && info.groupId) {
+      const groupId = info.groupId;
+      setPending(true);
+      // The same watcher the fresh-join path arms, so an approval that lands
+      // while this page is open still opens the group by itself.
+      setPendingGroupId(groupId);
+      void (async () => {
+        if (groupName) await localDb.pendingNames.put({ groupId, name: groupName }).catch(() => {});
+        // Re-derivable rather than remembered: the digits are a function of
+        // the token, this device's key and the group, so the admin still
+        // reads the same ones off a request made on a previous visit. Locked
+        // keys mean no digits, not a broken page — the same as on a fresh ask.
+        const keys = await loadKeys();
+        if (keys) setSas(await deriveSas(await sha256Hex(token), keys.publicKey, groupId));
+      })();
+    }
+  }, [info, token, groupName, navigate]);
+
   // A name match is a hint, never a pre-made choice. Claiming rewrites every
   // split that mentions the placeholder, so a second Sam joining a group that
   // already lists a Sam must not be walked into taking over the first one.
@@ -142,6 +193,19 @@ export function InvitePage() {
   if (!info || loading)
     return <p className="mt-8 text-center text-slate-500 dark:text-slate-400">{t('group.loading')}</p>;
 
+  const state = info.state ?? 'open';
+  // The effect above is already on its way into the group. Saying so beats
+  // flashing the join screen — with its "are you one of these people?" — at
+  // somebody who has been a member for weeks.
+  if (state === 'joined')
+    return <p className="mt-8 text-center text-slate-500 dark:text-slate-400">{t('invitePage.alreadyMember')}</p>;
+
+  // Only these two are still about deciding how to join. On a spent or
+  // declined link the terms of the invite are history, and repeating them
+  // would read like an offer.
+  const live = state === 'open' || state === 'pending';
+  const waiting = user && (pending || state === 'pending');
+
   return (
     <div className="mx-auto mt-10 flex max-w-sm flex-col items-center gap-4 text-center">
       <p>{t('invitePage.invitedBy', { name: info.inviterName })}</p>
@@ -151,22 +215,59 @@ export function InvitePage() {
           itself, so there is nothing to pick. Saying so is the whole fix: the
           option that does the right thing used to be labelled "join as someone
           new", which reads like abandoning your own history. */}
-      {info.wasMember && (
+      {live && info.wasMember && (
         <p className="rounded bg-teal-50 p-3 text-left text-sm text-teal-900 dark:bg-teal-950 dark:text-teal-100">
           {t('invitePage.wasMember', { name: info.wasMember.displayName })}
         </p>
       )}
 
-      {info.shareHistory === false && (
+      {live && info.shareHistory === false && (
         <p className="rounded bg-amber-50 p-3 text-left text-sm text-amber-900 dark:bg-amber-950 dark:text-amber-100">
           {t('invitePage.fromToday')}
         </p>
       )}
 
-      {user && pending ? (
+      {state === 'spent' ? (
+        <div className="flex flex-col gap-3">
+          <p className="rounded bg-amber-50 p-3 text-left text-sm text-amber-900 dark:bg-amber-950 dark:text-amber-100">
+            {/* Signed in, the server has ruled out every way this could have
+                been *their* use of it — no membership, no request of their
+                own — so it can say plainly that somebody else got there. To an
+                anonymous visitor it cannot: they may be the joiner, logged out
+                or on a second device, and telling them a stranger took their
+                link would be both wrong and alarming. */}
+            {user ? t('invitePage.spent') : t('invitePage.spentSignedOut')}
+          </p>
+          {user ? (
+            <Link to="/" className="text-sm text-teal-700 underline dark:text-teal-300">
+              {t('invitePage.backToGroups')}
+            </Link>
+          ) : (
+            <Link
+              to="/login?next=%2Finvite"
+              onClick={() => invite && stashInvite(invite)}
+              className="rounded bg-teal-700 px-6 py-2 font-medium text-white"
+            >
+              {t('invitePage.logInToCheck')}
+            </Link>
+          )}
+        </div>
+      ) : state === 'declined' ? (
+        <div className="flex flex-col gap-3">
+          <p className="rounded bg-amber-50 p-3 text-left text-sm text-amber-900 dark:bg-amber-950 dark:text-amber-100">
+            {t('invitePage.declined')}
+          </p>
+          <Link to="/" className="text-sm text-teal-700 underline dark:text-teal-300">
+            {t('invitePage.backToGroups')}
+          </Link>
+        </div>
+      ) : waiting ? (
         <div className="flex flex-col gap-2">
           <p className="rounded bg-teal-50 px-4 py-3 text-teal-900 dark:bg-teal-950 dark:text-teal-100">
-            {t('invitePage.requestSent')}
+            {/* "Sent" is only true of the visit that sent it. Coming back to
+                the link is the case this page used to answer with the join
+                screen, and the one word that has to change is the verb. */}
+            {state === 'pending' ? t('invitePage.requestWaiting') : t('invitePage.requestSent')}
           </p>
           {sas && (
             <div className="flex flex-col gap-1 rounded border border-slate-200 px-4 py-3 dark:border-slate-700">

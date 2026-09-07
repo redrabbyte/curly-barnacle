@@ -622,6 +622,18 @@ export const en = {
   'invitePage.fromToday':
     'This invite shares the group from today onwards. Whatever has been recorded so far stays sealed — you will not see those amounts, and balances between other people will be incomplete for you. Your own balance will still be exact, because you were in none of those splits.',
   'invitePage.requestSent': 'Request sent. An admin of this group has to approve it before you can see anything.',
+  // Coming back to the same link. Everything below is about a link that has
+  // already done its one job — for this account, or for somebody else's.
+  'invitePage.requestWaiting':
+    'You have already asked to join this group, and an admin still has to approve it. Following the link again does not ask a second time, and does not change the name you picked.',
+  'invitePage.alreadyMember': 'You are already in this group. Opening it…',
+  'invitePage.spent':
+    'Somebody else has already used this invite link. A link works once, so ask whoever runs the group to send you a new one.',
+  'invitePage.spentSignedOut':
+    'This invite link has already been used. If that was you, log in and this page will show how far your request got. If it was not, ask whoever runs the group for a new link — each one works once.',
+  'invitePage.logInToCheck': 'Log in to check',
+  'invitePage.declined':
+    'Your request to join this group was declined, and this link cannot be used again. Ask whoever runs the group if that was not what they meant.',
   'invitePage.sasIntro': 'If they ask you to confirm a code, it is',
   'invitePage.sasHint': 'Read it out to them — over a call, not over the same chat the link came from.',
   'invitePage.willOpen':

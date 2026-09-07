@@ -602,6 +602,16 @@ export const de: Catalogue = {
     'Diese Einladung teilt die Gruppe ab heute. Alles bisher Eingetragene bleibt verschlüsselt — du siehst diese Beträge nicht, und Salden zwischen anderen sind für dich unvollständig. Dein eigener Saldo stimmt trotzdem genau, weil du an keiner dieser Aufteilungen beteiligt warst.',
   'invitePage.requestSent':
     'Anfrage gesendet. Eine Administratorin oder ein Administrator dieser Gruppe muss sie freigeben, bevor du etwas sehen kannst.',
+  'invitePage.requestWaiting':
+    'Du hast schon angefragt, dieser Gruppe beizutreten, und die Freigabe steht noch aus. Den Link noch einmal zu öffnen fragt nicht ein zweites Mal und ändert auch den gewählten Namen nicht.',
+  'invitePage.alreadyMember': 'Du bist schon in dieser Gruppe. Sie wird geöffnet …',
+  'invitePage.spent':
+    'Diesen Einladungslink hat schon jemand anderes benutzt. Ein Link gilt nur einmal — bitte die Gruppe um einen neuen.',
+  'invitePage.spentSignedOut':
+    'Dieser Einladungslink wurde schon benutzt. Falls du das warst: Melde dich an, dann zeigt diese Seite, wie weit deine Anfrage ist. Falls nicht, bitte die Gruppe um einen neuen Link — jeder gilt nur einmal.',
+  'invitePage.logInToCheck': 'Zum Nachsehen anmelden',
+  'invitePage.declined':
+    'Deine Anfrage, dieser Gruppe beizutreten, wurde abgelehnt, und dieser Link lässt sich nicht noch einmal benutzen. Frag bei der Gruppe nach, falls das ein Versehen war.',
   'invitePage.sasIntro': 'Falls nach einem Code gefragt wird, lautet er',
   'invitePage.sasHint': 'Lies ihn vor — per Anruf, nicht über denselben Chat, aus dem der Link kam.',
   'invitePage.willOpen':

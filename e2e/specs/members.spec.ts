@@ -1,6 +1,16 @@
-import { expect, seedGroup, seedGroupKey, test } from '../fixtures/api';
+import { ME, expect, seedGroup, seedGroupKey, test } from '../fixtures/api';
 
 const GROUP = '22222222-2222-4222-8222-222222222222';
+
+/**
+ * The invite screen is for somebody who is *not* in the group yet. The seed
+ * above puts the signed-in account in it, and following your own group's link
+ * now takes you straight into the group rather than to a picker that could not
+ * do anything — so these tests have to leave first.
+ */
+function notYetAMember(api: import('../fixtures/api').ApiState): void {
+  api.members.set(GROUP, api.members.get(GROUP)!.filter((m) => m.userId !== ME.id));
+}
 
 test.beforeEach(async ({ api }) => {
   seedGroup(api, GROUP, 'Trip', [
@@ -51,8 +61,9 @@ test('adds a member who has no account', async ({ page, api }) => {
 });
 
 test('an invite offers the unclaimed members but never preselects one', async ({ page, api }) => {
+  notYetAMember(api);
   // The signed-in account is "Lukas"; rename a placeholder to match it.
-  api.members.get(GROUP)![1]!.displayName = 'lukas ';
+  api.members.get(GROUP)!.find((m) => m.displayName === 'Anna')!.displayName = 'lukas ';
   await page.goto('/invite#tokAAAAAAAAAAAAAAAAAA');
 
   const claim = page.locator('#claim');
@@ -68,7 +79,8 @@ test('an invite offers the unclaimed members but never preselects one', async ({
   await expect(page.getByRole('button', { name: 'Join as this person' })).toBeVisible();
 });
 
-test('joining as someone new works while other names are still unclaimed', async ({ page }) => {
+test('joining as someone new works while other names are still unclaimed', async ({ page, api }) => {
+  notYetAMember(api);
   await page.goto('/invite#tokAAAAAAAAAAAAAAAAAA');
   // Two placeholders are sitting unclaimed; neither may block a fresh join.
   await expect(page.locator('#claim')).toHaveValue('');

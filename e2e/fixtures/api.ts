@@ -166,6 +166,12 @@ export interface ApiState {
   publishedWraps: { groupId: string; userId: string; epoch: number; epk: string; iv: string; ct: string }[];
   /** What the last invite created asked for; false = history-scoped (§4.7). */
   lastInviteShareHistory: boolean | null;
+  /**
+   * The link the specs follow has already been used by somebody else. A link
+   * is single-use, so this is what a third party following a forwarded one
+   * meets — the mock has no use counter of its own, so a spec sets it.
+   */
+  inviteSpent: boolean;
   /** When true, key-coverage reports the signed-in user as the only holder. */
   soleKeyHolder: boolean;
   /**
@@ -224,6 +230,7 @@ export function createState(overrides: Partial<ApiState> = {}): ApiState {
     heldEpochs: new Map(),
     publishedWraps: [],
     lastInviteShareHistory: null,
+    inviteSpent: false,
     soleKeyHolder: false,
     othersHold: new Map(),
     policy: { version: 'test-policy-1', text: 'We keep as little as we can.', installed: true },
@@ -1045,6 +1052,21 @@ export async function installApi(context: BrowserContext, state: ApiState): Prom
       // falling through fulfils a second time and Playwright throws.
       if (!check(inviteJoinSchema, body())) return;
       const [groupId] = [...state.groups.keys()];
+      // Recorded, because the real server records it: it is what makes a
+      // second visit to the same link say "already asked" rather than draw
+      // the join screen again.
+      const queue = state.joinRequests.get(groupId ?? '') ?? [];
+      if (!queue.some((r) => r.userId === ME.id)) {
+        queue.push({
+          userId: ME.id,
+          displayName: ME.displayName,
+          claimMemberId: (body() as { claimMemberId?: string }).claimMemberId ?? null,
+          requestedAt: new Date().toISOString(),
+          status: 'pending',
+        });
+        state.joinRequests.set(groupId ?? '', queue);
+      }
+      state.inviteSpent = true;
       return json(route, { status: 'pending', groupId: groupId ?? '' });
     }
 
@@ -1066,12 +1088,30 @@ export async function installApi(context: BrowserContext, state: ApiState): Prom
           kind: m.isPlaceholder ? 'placeholder' : 'departed',
           alsoKnownAs: members.filter((o) => o.aliasOf === m.userId).map((o) => o.displayName),
         }));
+      // What the link can still do for whoever is asking, in the order the
+      // server decides it: what is true of the caller beats what is true of
+      // the link, so the person who spent it is never told a stranger did.
+      const myMembership = members.find((m) => m.userId === ME.id && m.leftAt === null && !m.isPlaceholder);
+      const myRequest = (state.joinRequests.get(groupId ?? '') ?? []).find((r) => r.userId === ME.id);
+      const spent = state.inviteSpent ? 'spent' : 'open';
+      const inviteState = !state.signedIn
+        ? spent
+        : myMembership
+          ? 'joined'
+          : myRequest?.status === 'rejected'
+            ? 'declined'
+            : myRequest
+              ? 'pending'
+              : spent;
+      const live = inviteState === 'open' || inviteState === 'pending';
       // The server withholds this list from anonymous callers.
       // No group name: the server holds it sealed. The link carries it.
       return json(route, {
         inviterName: 'Someone',
-        claimable: state.signedIn ? claimable : [],
-        wasMember: state.signedIn && mine ? { userId: mine.userId, displayName: mine.displayName } : null,
+        state: inviteState,
+        groupId: inviteState === 'joined' || inviteState === 'pending' ? (groupId ?? null) : null,
+        claimable: state.signedIn && live ? claimable : [],
+        wasMember: state.signedIn && live && mine ? { userId: mine.userId, displayName: mine.displayName } : null,
       });
     }
 

@@ -2,6 +2,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { and, eq, isNull, lt, sql } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import { inviteJoinSchema, inviteTokenSchema } from '@spendapp/shared';
+import type { InviteState } from '@spendapp/shared';
 import { config } from '../config.js';
 import { db, schema } from '../db/index.js';
 import { activeAdminIds, isMember } from '../lib/groups.js';
@@ -56,12 +57,20 @@ export async function inviteRoutes(app: FastifyInstance): Promise<void> {
       if (!parsed.success) return reply.code(404).send({ error: 'invite_invalid' });
       const invite = await findValidInvite(parsed.data.token);
       if (!invite) return reply.code(404).send({ error: 'invite_invalid' });
+      const state = await inviteState(invite, req.user?.id);
       // The claimable list names every placeholder in the group and carries
       // their ids, so it is withheld until the caller has signed in. A link
       // forwarded to a stranger reveals nothing but the group and inviter,
       // which is what a landing page needs; claiming requires a session
       // anyway, so gating it costs the real joiner nothing.
-      const claimable = req.user ? await claimableMembers(invite.groupId) : [];
+      //
+      // Withheld again once the answer is no longer "you may join": a spent or
+      // declined link is not going to admit this caller, and a page that still
+      // asked which name they are would be offering a choice that leads
+      // nowhere. `pending` keeps it for the same reason it keeps everything
+      // else — the request it describes is real, just undecided.
+      const offerClaims = state === 'open' || state === 'pending';
+      const claimable = req.user && offerClaims ? await claimableMembers(invite.groupId) : [];
       // Their *own* departed membership. Rejoining on the same account
       // resurrects it by itself, so it must not be offered as something to
       // claim — that would make the correct action look like a choice between
@@ -73,6 +82,12 @@ export async function inviteRoutes(app: FastifyInstance): Promise<void> {
         // Told up front, not discovered afterwards: a ledger you can only see
         // half of is something to accept knowingly (design §4.7).
         shareHistory: invite.shareHistory,
+        state,
+        // Only ever for a caller who is already inside or already asked — both
+        // of whom the server has just confirmed. For anybody else the group id
+        // is one more thing a forwarded link would give away, and the landing
+        // page has no use for it.
+        groupId: state === 'joined' || state === 'pending' ? invite.groupId : null,
         claimable: claimable.filter((c) => c.userId !== req.user?.id),
         wasMember: mine ? { userId: mine.userId, displayName: mine.displayName } : null,
       };
@@ -177,6 +192,8 @@ async function findValidInvite(token: string) {
       expiresAt: schema.invites.expiresAt,
       inviterName: schema.users.displayName,
       shareHistory: schema.invites.shareHistory,
+      useCount: schema.invites.useCount,
+      maxUses: schema.invites.maxUses,
     })
     .from(schema.invites)
     .innerJoin(schema.groups, eq(schema.groups.id, schema.invites.groupId))
@@ -187,4 +204,35 @@ async function findValidInvite(token: string) {
   if (!invite) return null;
   if (invite.expiresAt && invite.expiresAt.getTime() < Date.now()) return null;
   return invite;
+}
+
+/**
+ * What this link can still do for this caller (see `InviteState`).
+ *
+ * Deliberately reproduces the order `/api/invites/join` decides in, because
+ * the landing page's job is to say in advance what pressing the button would
+ * do. Membership first, then a standing request, then the link's own use
+ * count — so the person who spent the link is shown their own request rather
+ * than told a stranger took it, and a decline stays final rather than being
+ * softened into "already used".
+ */
+async function inviteState(
+  invite: { groupId: string; useCount: number; maxUses: number },
+  userId: string | undefined,
+): Promise<InviteState> {
+  const spent = invite.useCount >= invite.maxUses ? 'spent' : 'open';
+  if (!userId) return spent;
+  if (await isMember(userId, invite.groupId)) return 'joined';
+  const rows = await db
+    .select({ status: schema.joinRequests.status })
+    .from(schema.joinRequests)
+    .where(and(eq(schema.joinRequests.groupId, invite.groupId), eq(schema.joinRequests.userId, userId)))
+    .limit(1);
+  const status = rows[0]?.status;
+  if (status === 'pending') return 'pending';
+  if (status === 'rejected') return 'declined';
+  // 'approved' without a live membership is somebody who has since left. Their
+  // way back is a fresh link — this one's use is gone — so it falls through to
+  // the count, which says exactly that.
+  return spent;
 }
