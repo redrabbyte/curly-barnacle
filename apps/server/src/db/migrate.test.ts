@@ -459,3 +459,79 @@ d('sealing the group name', () => {
     expect(JSON.stringify(rows)).not.toContain('Trip');
   });
 });
+
+/**
+ * Requiring the sealed name (0010).
+ *
+ * The last step, and the one that cannot be taken early: a group without a
+ * sealed name afterwards is a group nothing can call anything. What matters is
+ * that running it while any group is still unsealed fails loudly rather than
+ * coercing the empty columns, and that the readable name is never dropped from
+ * a row that has no sealed one.
+ */
+const NAME_REQUIRED = '0010_group_name_required.sql';
+
+d('requiring the sealed name', () => {
+  let c: mysql.Connection;
+
+  beforeAll(async () => {
+    const admin = await mysql.createConnection({ uri: process.env.DATABASE_URL!, multipleStatements: true });
+    await admin.query(`drop database if exists \`${SCRATCH}4\``);
+    await admin.query(`create database \`${SCRATCH}4\``);
+    await admin.end();
+    const url = new URL(process.env.DATABASE_URL!);
+    url.pathname = `/${SCRATCH}4`;
+    c = await mysql.createConnection({ uri: url.toString(), multipleStatements: true });
+    for (const f of migrationsUpTo(NAME_REQUIRED)) await run(c, f);
+
+    await c.query(`insert into users (id, username, display_name, is_placeholder, created_at)
+                   values (?, 'alice', 'Alice', 0, now(3))`, [ALICE]);
+    // One group still readable and unsealed — the state this must refuse.
+    await c.query(`insert into \`groups\` (id, name, default_currency, created_by, created_at, version)
+                   values (?, 'Trip', 'EUR', ?, now(3), 1)`, [GROUP, ALICE]);
+  }, 60_000);
+
+  afterAll(async () => {
+    if (!c) return;
+    await c.query(`drop database if exists \`${SCRATCH}4\``);
+    await c.end();
+  });
+
+  it('refuses while any group is still unsealed, and drops nothing', async () => {
+    await expect(run(c, NAME_REQUIRED)).rejects.toThrow();
+    const [[row]] = await c.query<mysql.RowDataPacket[]>('select * from `groups` where id = ?', [GROUP]);
+    // The readable name is still there to be sealed from, not coerced to ''.
+    expect(row!.name).toBe('Trip');
+    expect(row!.name_ct).toBeNull();
+  });
+
+  it('applies once every group is sealed, and the readable column is gone', async () => {
+    const sealed = await sealJson(groupKeyFor(0), { name: 'Trip' }, new TextEncoder().encode(`groupname|${GROUP}|0`));
+    await c.query('update `groups` set name = null, name_epoch = 0, name_iv = ?, name_ct = ? where name_ct is null', [
+      toBase64Url(sealed.iv),
+      toBase64Url(sealed.ciphertext),
+    ]);
+    await run(c, NAME_REQUIRED);
+    const [cols] = await c.query<mysql.RowDataPacket[]>(
+      `select column_name as n, is_nullable as nullable from information_schema.columns
+       where table_schema = ? and table_name = 'groups' and column_name in ('name', 'name_epoch', 'name_iv', 'name_ct')`,
+      [`${SCRATCH}4`],
+    );
+    expect(cols.map((col) => col.n as string).sort()).toEqual(['name_ct', 'name_epoch', 'name_iv']);
+    for (const col of cols) expect(col.nullable).toBe('NO');
+    // And the name still opens: nothing about the sealed bytes moved.
+    const [[row]] = await c.query<mysql.RowDataPacket[]>('select * from `groups` where id = ?', [GROUP]);
+    expect(
+      await openSealed(groupKeyFor(0), { iv: row!.name_iv as string, ct: row!.name_ct as string }, new TextEncoder().encode(`groupname|${GROUP}|0`)),
+    ).toEqual({ name: 'Trip' });
+  });
+
+  it('then rejects a group without a sealed name', async () => {
+    await expect(
+      c.query(
+        `insert into \`groups\` (id, default_currency, created_by, created_at, version) values (uuid(), 'EUR', ?, now(3), 1)`,
+        [ALICE],
+      ),
+    ).rejects.toThrow();
+  });
+});

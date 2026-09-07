@@ -106,19 +106,14 @@ export interface StubGroup {
   version: number;
   /**
    * The name as the client sealed it — in the create, a mint, or a backfill
-   * — sent back verbatim like the server does. Absent for a seeded group,
-   * which the mock seals itself under the newest seeded epoch; absent with no
-   * seeded key at all, and the readable name goes out as it did before names
-   * were sealed, which is exactly the shape a real server sends while a
-   * group waits for its first member to seal it.
+   * — sent back verbatim like the server does. Absent for a seeded group
+   * until its first pull, when the mock seals it itself under the newest
+   * seeded epoch (epoch 0 when none is seeded: the client then holds no key
+   * and shows the placeholder, exactly as against a real server). A sealed
+   * name that lags a newer seeded epoch is left lagging, as the server leaves
+   * it, so a spec can watch the client bring it forward.
    */
   sealedName?: { epoch: number; iv: string; ct: string };
-  /**
-   * A group from before names were sealed: the readable name goes out even
-   * though a key is seeded, until the client seals it — which is the backfill
-   * a spec sets this to watch.
-   */
-  unsealed?: boolean;
 }
 
 export interface ApiState {
@@ -305,31 +300,21 @@ function latestEpochOf(state: ApiState, groupId: string): number | null {
   return epochs.length === 0 ? null : Math.max(...epochs);
 }
 
-/**
- * The group row for the wire, name sealed (design §4.2). A seeded group is
- * sealed here under the newest seeded epoch, once, and re-sealed if a newer
- * epoch is seeded later — the same rule the real server holds clients to.
- */
+/** The group row for the wire, name sealed (design §4.2). */
 async function groupWire(state: ApiState, group: StubGroup): Promise<GroupWire> {
-  const latest = latestEpochOf(state, group.id);
-  if (
-    latest !== null &&
-    !group.unsealed &&
-    (!group.sealedName || group.sealedName.epoch < latest) &&
-    !state.groupSecrets.has(group.id)
-  ) {
-    const sealed = await sealJson(groupKeyFor(latest), { name: group.name }, groupNameAad(group.id, latest));
-    group.sealedName = { epoch: latest, iv: toBase64Url(sealed.iv), ct: toBase64Url(sealed.ciphertext) };
+  if (!group.sealedName) {
+    const epoch = latestEpochOf(state, group.id) ?? 0;
+    const sealed = await sealJson(groupKeyFor(epoch), { name: group.name }, groupNameAad(group.id, epoch));
+    group.sealedName = { epoch, iv: toBase64Url(sealed.iv), ct: toBase64Url(sealed.ciphertext) };
   }
   const { sealedName } = group;
   return {
     id: group.id,
     defaultCurrency: group.defaultCurrency,
     version: group.version,
-    nameEpoch: sealedName?.epoch ?? null,
-    nameIv: sealedName?.iv ?? null,
-    nameCt: sealedName?.ct ?? null,
-    name: sealedName ? null : group.name,
+    nameEpoch: sealedName.epoch,
+    nameIv: sealedName.iv,
+    nameCt: sealedName.ct,
   };
 }
 
@@ -978,9 +963,8 @@ export async function installApi(context: BrowserContext, state: ApiState): Prom
 
     /**
      * The name sealed under the newest epoch, after the fact (design §4.2):
-     * a group from before names were sealed, or one whose rotation went
-     * through without it. Checked as the server checks it — newest epoch,
-     * held by the caller — and stored unread.
+     * one whose rotation went through without it. Checked as the server
+     * checks it — newest epoch, held by the caller — and stored unread.
      */
     const nameMatch = /^\/api\/groups\/([^/]+)\/name$/.exec(path);
     if (nameMatch && method === 'POST') {
@@ -991,10 +975,7 @@ export async function installApi(context: BrowserContext, state: ApiState): Prom
       if (!group) return json(route, { error: 'not_found' }, 404);
       if (data.epoch !== latestEpochOf(state, groupId)) return json(route, { error: 'not_newest_epoch' }, 409);
       const stored = !group.sealedName || group.sealedName.epoch < data.epoch;
-      if (stored) {
-        group.sealedName = { epoch: data.epoch, iv: data.iv, ct: data.ct };
-        group.unsealed = false;
-      }
+      if (stored) group.sealedName = { epoch: data.epoch, iv: data.iv, ct: data.ct };
       state.nameSeals.push({ groupId, epoch: data.epoch, via: 'backfill' });
       return json(route, { stored });
     }

@@ -111,6 +111,8 @@ test('deleting says what it will destroy before asking for the password', async 
   const me = { userId: ME.id, displayName: ME.displayName, isPlaceholder: false, role: 'admin' as const };
   seedGroup(api, FLAT, 'Flat', [me]);
   seedGroup(api, TRIP, 'Trip', [me]);
+  await seedGroupKey(api, FLAT);
+  await seedGroupKey(api, TRIP);
   api.deletionPreview = [
     { groupId: FLAT, members: 1, willBeDeleted: true, willPromoteAnAdmin: false, orphanedEpochs: [] },
     { groupId: TRIP, members: 2, willBeDeleted: false, willPromoteAnAdmin: true, orphanedEpochs: [0] },

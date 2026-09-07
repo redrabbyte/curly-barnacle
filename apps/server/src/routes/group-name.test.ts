@@ -44,6 +44,8 @@ async function session(userId: string): Promise<string> {
 const hdrs = (raw: string) => ({ cookie: `sid=${raw}`, 'x-requested-with': 'spendapp' });
 const wrap = (userId: string, epoch: number) => ({ userId, epoch, epk: b64(32), iv: b64(12), ct: b64(48) });
 const sealed = () => ({ iv: b64(12), ct: b64(48) });
+/** What the group starts with: its name under epoch 0. */
+const SEEDED = { nameEpoch: 0, nameIv: 'aXY', nameCt: 'Y3Q' };
 
 async function reset() {
   await db.delete(schema.processedMutations);
@@ -73,10 +75,10 @@ async function reset() {
       privacyVersion: '1',
     });
   }
-  // A group from before names were sealed: readable, nothing sealed yet.
+  // Sealed under epoch 0, as every group is from the moment it exists.
   await db
     .insert(schema.groups)
-    .values({ id: GROUP, name: 'Paris trip', defaultCurrency: 'EUR', createdBy: ADA, createdAt: new Date(), lastVersion: 1 });
+    .values({ id: GROUP, ...SEEDED, defaultCurrency: 'EUR', createdBy: ADA, createdAt: new Date(), lastVersion: 1 });
   await db.insert(schema.groupMembers).values([
     { groupId: GROUP, userId: ADA, role: 'admin', joinedAt: new Date() },
     { groupId: GROUP, userId: GRACE, role: 'member', joinedAt: new Date() },
@@ -121,24 +123,25 @@ afterAll(async () => {
 d('minting with the name', () => {
   beforeEach(reset);
 
-  it('stores the name with the epoch it was sealed under, and drops the readable copy', async () => {
+  it('stores the name with the epoch it was sealed under', async () => {
+    await mint(ADA, 0, [ADA, GRACE]);
     const name = sealed();
-    const res = await mint(ADA, 0, [ADA, GRACE], name);
+    const res = await mint(ADA, 1, [ADA, GRACE], name);
     expect(res.json()).toMatchObject({ minted: true, named: true });
     const g = await groupRow();
-    expect(g.name).toBeNull();
-    expect(g.nameEpoch).toBe(0);
+    expect(g.nameEpoch).toBe(1);
     expect(g.nameCt).toBe(name.ct);
   });
 
-  it('goes ahead without a name, leaving it for whoever can seal it', async () => {
+  it('goes ahead without a name, leaving it where it was for whoever can seal it', async () => {
     // A rotation that ends somebody's access must not wait on a device that
     // could not open the name itself.
-    const res = await mint(ADA, 0, [ADA, GRACE]);
+    await mint(ADA, 0, [ADA, GRACE]);
+    const res = await mint(ADA, 1, [ADA, GRACE]);
     expect(res.json()).toMatchObject({ minted: true, named: false });
     const g = await groupRow();
-    expect(g.name).toBe('Paris trip');
-    expect(g.nameEpoch).toBeNull();
+    expect(g.nameEpoch).toBe(0);
+    expect(g.nameCt).toBe(SEEDED.nameCt);
   });
 
   it('brings the name forward on every rotation', async () => {
@@ -175,20 +178,22 @@ d('sealing the name after the fact', () => {
 
   it('accepts the name under the newest epoch from a member who holds it', async () => {
     await mint(ADA, 0, [ADA, GRACE]);
+    await mint(ADA, 1, [ADA, GRACE]);
     const name = sealed();
-    const res = await setName(GRACE, 0, name);
+    const res = await setName(GRACE, 1, name);
     expect(res.statusCode).toBe(200);
     expect(res.json()).toEqual({ stored: true });
     const g = await groupRow();
-    expect(g.name).toBeNull();
+    expect(g.nameEpoch).toBe(1);
     expect(g.nameCt).toBe(name.ct);
   });
 
   it('lets the first writer win, quietly', async () => {
     await mint(ADA, 0, [ADA, GRACE]);
+    await mint(ADA, 1, [ADA, GRACE]);
     const first = sealed();
-    await setName(GRACE, 0, first);
-    const second = await setName(ADA, 0, sealed());
+    await setName(GRACE, 1, first);
+    const second = await setName(ADA, 1, sealed());
     expect(second.statusCode).toBe(200);
     expect(second.json()).toEqual({ stored: false });
     expect((await groupRow()).nameCt).toBe(first.ct);
@@ -202,7 +207,7 @@ d('sealing the name after the fact', () => {
     expect(stale.json()).toEqual({ error: 'not_newest_epoch' });
     // And an epoch that does not exist yet is not the newest either.
     expect((await setName(GRACE, 2)).statusCode).toBe(409);
-    expect((await groupRow()).name).toBe('Paris trip');
+    expect((await groupRow()).nameCt).toBe(SEEDED.nameCt);
   });
 
   it('refuses a member who was not given the newest epoch', async () => {
@@ -232,21 +237,21 @@ d('sealing the name after the fact', () => {
 d('what the pull says about the name', () => {
   beforeEach(reset);
 
-  it('sends the readable name only while nobody has sealed it, and always the newest epoch', async () => {
+  it('sends the sealed name and the newest epoch, and nothing readable', async () => {
     let ch = await pull(ADA);
-    expect(ch.group).toMatchObject({ name: 'Paris trip', nameEpoch: null, nameIv: null, nameCt: null });
+    expect(ch.group).toMatchObject(SEEDED);
+    expect(ch.group).not.toHaveProperty('name');
     expect(ch.latestEpoch).toBeNull();
 
     await mint(ADA, 0, [ADA, GRACE]);
     ch = await pull(ADA);
-    expect(ch.group.name).toBe('Paris trip');
     expect(ch.latestEpoch).toBe(0);
 
     const name = sealed();
-    await setName(ADA, 0, name);
+    await mint(ADA, 1, [ADA, GRACE], name);
     ch = await pull(GRACE);
-    expect(ch.group).toMatchObject({ name: null, nameEpoch: 0, nameIv: name.iv, nameCt: name.ct });
-    expect(JSON.stringify(ch)).not.toContain('Paris trip');
+    expect(ch.group).toMatchObject({ nameEpoch: 1, nameIv: name.iv, nameCt: name.ct });
+    expect(ch.latestEpoch).toBe(1);
   });
 });
 
@@ -278,7 +283,7 @@ d('creating a group', () => {
     expect((res.json() as { results: { status: string }[] }).results[0]).toMatchObject({ status: 'applied' });
 
     const [g] = await db.select().from(schema.groups).where(eq(schema.groups.id, id));
-    expect(g).toMatchObject({ name: null, nameEpoch: 0, nameIv: name.iv, nameCt: name.ct });
+    expect(g).toMatchObject({ nameEpoch: 0, nameIv: name.iv, nameCt: name.ct });
 
     const [created] = await db.select().from(schema.activity).where(eq(schema.activity.entityId, id));
     expect(created!.type).toBe('group.created');

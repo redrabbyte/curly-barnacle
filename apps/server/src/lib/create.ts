@@ -46,7 +46,6 @@ export async function applyGroupCreate(
       // Under epoch 0, which is minted in the same transaction below: the
       // creator held it before they could seal anything, and it is the only
       // epoch there is until somebody rotates.
-      name: null,
       nameEpoch: 0,
       nameIv: input.name.iv,
       nameCt: input.name.ct,

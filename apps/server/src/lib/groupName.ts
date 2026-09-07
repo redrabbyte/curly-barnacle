@@ -29,9 +29,6 @@ export async function newestEpoch(tx: Tx | typeof db, groupId: string): Promise<
  * blob lands does not matter, and a name under a newer epoch must never be
  * replaced by one under an older.
  *
- * The readable column is nulled in the same statement. Once a sealed name
- * exists nothing reads the plaintext, and leaving it would keep exactly the
- * thing this change exists to remove.
  */
 export async function storeSealedName(
   tx: Tx | typeof db,
@@ -41,7 +38,7 @@ export async function storeSealedName(
 ): Promise<boolean> {
   const [res] = await tx
     .update(schema.groups)
-    .set({ name: null, nameEpoch: epoch, nameIv: sealed.iv, nameCt: sealed.ct })
+    .set({ nameEpoch: epoch, nameIv: sealed.iv, nameCt: sealed.ct })
     .where(and(eq(schema.groups.id, groupId), or(isNull(schema.groups.nameEpoch), lt(schema.groups.nameEpoch, epoch))));
   return res.affectedRows > 0;
 }

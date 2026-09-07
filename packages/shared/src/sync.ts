@@ -204,18 +204,15 @@ export interface GroupDto {
 /**
  * A group as the wire carries it (design §4.2). The name travels sealed under
  * the group's newest epoch, so a member admitted from today onwards — who
- * holds nothing older — can still read it. `name` is the readable column from
- * before names were sealed; it is sent while a group is still waiting for one
- * of its members to seal it, and null once one has.
+ * holds nothing older — can still read it.
  */
 export interface GroupWire {
   id: string;
   defaultCurrency: string;
   version: number;
-  nameEpoch: number | null;
-  nameIv: string | null;
-  nameCt: string | null;
-  name?: string | null;
+  nameEpoch: number;
+  nameIv: string;
+  nameCt: string;
 }
 
 /** Extensible on purpose — more roles should not need a schema migration. */

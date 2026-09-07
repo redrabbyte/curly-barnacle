@@ -1,4 +1,4 @@
-import { expect, seedGroup, test } from '../fixtures/api';
+import { expect, seedGroup, seedGroupKey, test } from '../fixtures/api';
 
 const GROUP = '22222222-2222-4222-8222-222222222222';
 
@@ -8,6 +8,8 @@ test.beforeEach(async ({ api }) => {
     { userId: 'aaaa0000-0000-4000-8000-000000000001', displayName: 'Anna', isPlaceholder: true },
     { userId: 'aaaa0000-0000-4000-8000-000000000002', displayName: 'Bob', isPlaceholder: true },
   ]);
+  // The name is sealed; without a key the header would say it is waiting for one.
+  await seedGroupKey(api, GROUP);
 });
 
 test('separates registered users from people without accounts', async ({ page, api }) => {

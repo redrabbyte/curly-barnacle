@@ -79,12 +79,11 @@ describe('sealed tables hold no readable content', () => {
     ]);
   });
 
-  it('groups carry their name sealed, and the readable column only until the follow-up drops it', () => {
+  it('groups carry their name sealed and nothing readable', () => {
     // name_epoch/name_iv/name_ct are the name under the group's newest epoch
     // key (design §4.2): ciphertext under a key the server has never held,
-    // like every wrap. `name` is the readable column from before, nullable
-    // now and nulled the moment a member seals the name; it leaves with the
-    // migration described at the top of 0009, and this list with it.
+    // like every wrap. The readable `name` went with 0010, and a group cannot
+    // exist without the sealed one.
     expect(columnsOf(schema.groups)).toEqual([
       'created_at',
       'created_by',
@@ -92,13 +91,14 @@ describe('sealed tables hold no readable content', () => {
       'deleted_at',
       'id',
       'last_version',
-      'name',
       'name_ct',
       'name_epoch',
       'name_iv',
       'version',
     ]);
-    expect(schema.groups.name.notNull).toBe(false);
+    for (const column of [schema.groups.nameEpoch, schema.groups.nameIv, schema.groups.nameCt]) {
+      expect(column.notNull).toBe(true);
+    }
   });
 
   it('group keys are wraps only — no key the server could use', () => {

@@ -28,19 +28,9 @@ const KEYS = new Map<number, Uint8Array>([
 const keyFor: KeyLookup = async (e) => KEYS.get(e) ?? null;
 const noKeys: KeyLookup = async () => null;
 
-const wire = (over: Partial<GroupWire> = {}): GroupWire => ({
-  id: GROUP,
-  defaultCurrency: 'EUR',
-  version: 3,
-  nameEpoch: null,
-  nameIv: null,
-  nameCt: null,
-  ...over,
-});
-
 async function sealedWire(name: string, epoch: number, key = KEYS.get(epoch)!): Promise<GroupWire> {
   const sealed = await sealGroupName(GROUP, epoch, key, name);
-  return wire({ nameEpoch: epoch, nameIv: sealed.iv, nameCt: sealed.ct });
+  return { id: GROUP, defaultCurrency: 'EUR', version: 3, nameEpoch: epoch, nameIv: sealed.iv, nameCt: sealed.ct };
 }
 
 describe('sealing the name', () => {
@@ -94,11 +84,6 @@ describe('resolving the name into the mirror', () => {
     expect(row).toEqual({ name: 'Trip', nameEpoch: 0 });
   });
 
-  it('takes a readable name from before names were sealed, at no epoch', async () => {
-    const row = await resolveGroupName(wire({ name: 'Old flat' }), undefined, keyFor);
-    expect(row).toEqual({ name: 'Old flat', nameEpoch: null });
-  });
-
   it('does not open the same blob again on every pull', async () => {
     const spy = vi.fn(keyFor);
     const row = await resolveGroupName(await sealedWire('Trip', 1), { name: 'Trip', nameEpoch: 1 }, spy);
@@ -115,10 +100,6 @@ describe('resolving the name into the mirror', () => {
 describe('deciding to seal the name under the newest epoch', () => {
   const held = { name: 'Trip', nameEpoch: 0 };
 
-  it('seals a name nobody has sealed yet, when this device writes under the newest epoch', () => {
-    expect(shouldBackfillName({ name: 'Trip', nameEpoch: null }, null, 0, 0)).toBe(true);
-  });
-
   it('brings a name forward when it lags the newest epoch', () => {
     expect(shouldBackfillName(held, 0, 2, 2)).toBe(true);
   });
@@ -134,11 +115,11 @@ describe('deciding to seal the name under the newest epoch', () => {
   });
 
   it('never seals a placeholder', () => {
-    expect(shouldBackfillName({ name: '', nameEpoch: null }, null, 0, 0)).toBe(false);
+    expect(shouldBackfillName({ name: '', nameEpoch: null }, 0, 1, 1)).toBe(false);
   });
 
   it('has nothing to do for a group with no key at all', () => {
-    expect(shouldBackfillName(held, null, null, null)).toBe(false);
+    expect(shouldBackfillName(held, 0, null, null)).toBe(false);
   });
 });
 

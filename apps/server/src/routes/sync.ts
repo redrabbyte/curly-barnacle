@@ -305,14 +305,10 @@ async function collectGroupChanges(
       id: group.id,
       defaultCurrency: group.defaultCurrency,
       version: group.version,
-      // Sealed under `nameEpoch`; the client opens it with that key. The
-      // readable copy travels only while no member has sealed it yet — the
-      // window every existing group is in until its first sync after this —
-      // and is what that member seals.
+      // Sealed under `nameEpoch`; the client opens it with that key.
       nameEpoch: group.nameEpoch,
       nameIv: group.nameIv,
       nameCt: group.nameCt,
-      name: group.nameCt === null ? group.name : null,
     },
     latestEpoch,
     keys,

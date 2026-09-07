@@ -1,4 +1,4 @@
-import { expect, seedGroup, test } from '../fixtures/api';
+import { expect, seedGroup, seedGroupKey, signIn, test } from '../fixtures/api';
 
 const GROUP = '33333333-3333-4333-8333-333333333333';
 // The token is in the fragment, deliberately: a fragment is never sent to a
@@ -12,9 +12,15 @@ test.beforeEach(async ({ api }) => {
   seedGroup(api, GROUP, 'Trip', [
     { userId: '11111111-1111-4111-8111-111111111111', displayName: 'Lukas', isPlaceholder: false },
   ]);
+  // The link carries the name, which this device can only write in once it
+  // has opened it — so it needs the key, like every member does.
+  await seedGroupKey(api, GROUP);
 });
 
 async function showLink(page: import('@playwright/test').Page): Promise<void> {
+  // Through the form, so the account keys are on the device: the link
+  // carries the group's name, and only a device that can open it writes it in.
+  await signIn(page);
   await page.goto(`/g/${GROUP}`);
   await page.getByRole('button', { name: 'Invite link' }).click();
   // Two steps now: how much history the link shares is a choice, not a default

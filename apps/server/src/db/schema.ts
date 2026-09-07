@@ -81,13 +81,8 @@ export const sessions = mysqlTable('sessions', {
 export const groups = mysqlTable('groups', {
   id: id('id').primaryKey(),
   /**
-   * The readable name from before names were sealed. Null once a member has
-   * sealed it (`name_ct` below), and gone altogether once every group has —
-   * the follow-up migration drops it, and the sealed-tables test pins that.
-   */
-  name: varchar('name', { length: 120 }),
-  /**
    * The name, sealed under the group's *newest* epoch key (design §4.2).
+   * There is no readable one: 0009 moved it here and 0010 dropped the column.
    *
    * Newest, and re-sealed at every rotation, because a member admitted from
    * today onwards holds nothing older and still has to know what the group
@@ -95,9 +90,9 @@ export const groups = mysqlTable('groups', {
    * without a key: a write has to name the newest epoch, and lag behind it
    * is what a client repairs on its next sync.
    */
-  nameEpoch: int('name_epoch'),
-  nameIv: varchar('name_iv', { length: 32 }),
-  nameCt: varchar('name_ct', { length: 768 }),
+  nameEpoch: int('name_epoch').notNull(),
+  nameIv: varchar('name_iv', { length: 32 }).notNull(),
+  nameCt: varchar('name_ct', { length: 768 }).notNull(),
   defaultCurrency: char('default_currency', { length: 3 }).notNull(),
   createdBy: id('created_by').notNull(),
   createdAt: ts('created_at').notNull(),

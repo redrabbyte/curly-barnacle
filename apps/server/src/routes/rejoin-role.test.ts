@@ -62,7 +62,7 @@ async function reset() {
   }
   await db.insert(schema.groups).values({
     id: GROUP,
-    name: 'Trip',
+    nameEpoch: 0, nameIv: 'aXY', nameCt: 'Y3Q',
     defaultCurrency: 'EUR',
     createdBy: ADMIN,
     createdAt: new Date(),

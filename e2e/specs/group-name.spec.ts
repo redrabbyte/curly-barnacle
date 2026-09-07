@@ -1,4 +1,5 @@
-import { ME, epochKeyOf, expect, openSealedName, seedGroup, seedGroupKey, signIn, test } from '../fixtures/api';
+import { sealJson, toBase64Url } from '@spendapp/shared';
+import { ME, epochKeyOf, expect, groupKeyFor, openSealedName, seedGroup, seedGroupKey, signIn, test } from '../fixtures/api';
 
 /**
  * The group name is sealed like everything else the members write (design
@@ -10,6 +11,12 @@ import { ME, epochKeyOf, expect, openSealedName, seedGroup, seedGroupKey, signIn
 
 const GROUP = '55555555-5555-4555-8555-555555555555';
 const NAME = 'Divorce lawyer fund';
+
+/** A name sealed the way the client seals one, under a seeded key unless told otherwise. */
+async function sealNameFor(groupId: string, name: string, epoch: number, key = groupKeyFor(epoch)) {
+  const s = await sealJson(key, { name }, new TextEncoder().encode(`groupname|${groupId}|${epoch}`));
+  return { epoch, iv: toBase64Url(s.iv), ct: toBase64Url(s.ciphertext) };
+}
 
 test('a group is created with its name sealed, and the name never crosses the wire', async ({ page, api }) => {
   const bodies: string[] = [];
@@ -39,22 +46,25 @@ test('a group is created with its name sealed, and the name never crosses the wi
   await expect(page.getByRole('link', { name: new RegExp(NAME) })).toBeVisible();
 });
 
-test('a group from before names were sealed is sealed by the first member who can', async ({ page, api }) => {
+test('a name that lagged a rotation is brought forward by the first member who can', async ({ page, api }) => {
   seedGroup(api, GROUP, 'Old flat', [
     { userId: ME.id, displayName: ME.displayName, isPlaceholder: false, role: 'admin' },
   ]);
   await seedGroupKey(api, GROUP, 0);
-  // The readable column, as every existing group has it until this runs.
-  api.groups.get(GROUP)!.unsealed = true;
+  await seedGroupKey(api, GROUP, 1);
+  // Sealed under epoch 0 while the group is at 1: what a rotation by a device
+  // that held only a placeholder leaves behind, and what a member admitted on
+  // epoch 1 alone could not read.
+  api.groups.get(GROUP)!.sealedName = await sealNameFor(GROUP, 'Old flat', 0);
 
   await signIn(page);
   await expect(page.getByRole('link', { name: /Old flat/ })).toBeVisible();
 
-  // The backfill: sealed under the newest epoch and handed over, unprompted.
+  // Re-sealed under the newest epoch and handed over, unprompted.
   await expect.poll(() => api.nameSeals.some((n) => n.groupId === GROUP && n.via === 'backfill')).toBe(true);
   const sealed = api.groups.get(GROUP)!.sealedName!;
-  expect(sealed.epoch).toBe(0);
-  expect(await openSealedName(GROUP, sealed, epochKeyOf(api, GROUP, 0))).toBe('Old flat');
+  expect(sealed.epoch).toBe(1);
+  expect(await openSealedName(GROUP, sealed, epochKeyOf(api, GROUP, 1))).toBe('Old flat');
   // Once, not on every pull.
   await page.waitForTimeout(1500);
   expect(api.nameSeals.filter((n) => n.groupId === GROUP)).toHaveLength(1);
@@ -72,12 +82,7 @@ test('a member whose key has not arrived sees the group waiting, not blank or wr
     { userId: ME.id, displayName: ME.displayName, isPlaceholder: false },
   ]);
   await seedGroupKey(api, GROUP, 0);
-  const sealed = await (async () => {
-    const { sealJson, toBase64Url } = await import('@spendapp/shared');
-    const s = await sealJson(new Uint8Array(32).fill(0x77), { name: 'Not yet' }, new TextEncoder().encode(`groupname|${GROUP}|3`));
-    return { epoch: 3, iv: toBase64Url(s.iv), ct: toBase64Url(s.ciphertext) };
-  })();
-  api.groups.get(GROUP)!.sealedName = sealed;
+  api.groups.get(GROUP)!.sealedName = await sealNameFor(GROUP, 'Not yet', 3, new Uint8Array(32).fill(0x77));
 
   await signIn(page);
   await expect(page.getByText('Waiting for the group key…')).toBeVisible();

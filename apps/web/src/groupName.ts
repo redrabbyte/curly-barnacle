@@ -54,9 +54,6 @@ export async function openGroupName(
  * next pull may bring the key. Neither: an empty name with `nameEpoch: null`,
  * which the UI shows as "waiting for keys" and nothing ever seals back.
  *
- * The readable `name` from before names were sealed counts as opened at no
- * epoch: it is the name, and the backfill below is what seals it.
- *
  * Pure over the key lookup, so the rule can be tested without a database.
  */
 export async function resolveGroupName(
@@ -64,22 +61,16 @@ export async function resolveGroupName(
   previous: Pick<GroupDto, 'name' | 'nameEpoch'> | undefined,
   keyFor: KeyLookup,
 ): Promise<Pick<GroupDto, 'name' | 'nameEpoch'>> {
-  if (wire.nameEpoch !== null && wire.nameIv && wire.nameCt) {
-    // Nothing to do when the row is what we already opened. Names are opened
-    // on every pull, and every pull is a few seconds apart.
-    if (previous && previous.nameEpoch === wire.nameEpoch && previous.name !== '') return previous;
-    const key = await keyFor(wire.nameEpoch);
-    if (key) {
-      try {
-        return { name: await openGroupName(wire.id, wire.nameEpoch, key, { iv: wire.nameIv, ct: wire.nameCt }), nameEpoch: wire.nameEpoch };
-      } catch {
-        /* a blob that does not open under the key it claims: keep what we had */
-      }
+  // Nothing to do when the row is what we already opened. Names are opened
+  // on every pull, and every pull is a few seconds apart.
+  if (previous && previous.nameEpoch === wire.nameEpoch && previous.name !== '') return previous;
+  const key = await keyFor(wire.nameEpoch);
+  if (key) {
+    try {
+      return { name: await openGroupName(wire.id, wire.nameEpoch, key, { iv: wire.nameIv, ct: wire.nameCt }), nameEpoch: wire.nameEpoch };
+    } catch {
+      /* a blob that does not open under the key it claims: keep what we had */
     }
-  } else if (typeof wire.name === 'string' && wire.name !== '') {
-    // Not yet sealed by anybody. Held at "no epoch" so that the backfill sees
-    // it as work to do rather than as something already under a key.
-    return { name: wire.name, nameEpoch: null };
   }
   if (previous && previous.name !== '') return previous;
   return { name: '', nameEpoch: null };
@@ -98,13 +89,13 @@ export async function resolveGroupName(
  */
 export function shouldBackfillName(
   held: Pick<GroupDto, 'name' | 'nameEpoch'>,
-  sealedEpoch: number | null,
+  sealedEpoch: number,
   latestEpoch: number | null,
   writableEpoch: number | null,
 ): boolean {
   if (held.name === '') return false; // a placeholder: nothing to seal
   if (latestEpoch === null || writableEpoch !== latestEpoch) return false;
-  return sealedEpoch === null || sealedEpoch < latestEpoch;
+  return sealedEpoch < latestEpoch;
 }
 
 /** The name sealed for the mint of `epoch`, or nothing when the mirror holds only a placeholder. */

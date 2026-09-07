@@ -67,7 +67,7 @@ async function reset() {
   }
   await db
     .insert(schema.groups)
-    .values({ id: GROUP, name: 'Paris trip', defaultCurrency: 'EUR', createdBy: ADMIN, createdAt: new Date(), lastVersion: 1 });
+    .values({ id: GROUP, nameEpoch: 0, nameIv: 'aXY', nameCt: 'Y3Q', defaultCurrency: 'EUR', createdBy: ADMIN, createdAt: new Date(), lastVersion: 1 });
   await db.insert(schema.groupMembers).values({ groupId: GROUP, userId: ADMIN, role: 'admin', joinedAt: new Date() });
 }
 
@@ -125,7 +125,6 @@ d('invites', () => {
     expect(body.inviterName).toBe('Ada');
     // The name is sealed; the link the inviter handed out carries it instead.
     expect(body).not.toHaveProperty('groupName');
-    expect(JSON.stringify(body)).not.toContain('Paris trip');
   });
 
   it('resolves a row written before the tokens were hashed', async () => {

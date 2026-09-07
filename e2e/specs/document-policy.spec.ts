@@ -1,4 +1,4 @@
-import { expect, seedGroup, test } from '../fixtures/api';
+import { expect, seedGroup, seedGroupKey, signIn, test } from '../fixtures/api';
 
 /**
  * The Content-Security-Policy, tested where a CSP actually does something.
@@ -29,6 +29,7 @@ test.beforeEach(async ({ api, context }) => {
   seedGroup(api, GROUP, 'Trip', [
     { userId: '11111111-1111-4111-8111-111111111111', displayName: 'Lukas', isPlaceholder: false },
   ]);
+  await seedGroupKey(api, GROUP);
   // Before any document loads, so a violation during the initial script
   // evaluation is caught rather than missed by a listener added afterwards.
   await context.addInitScript(() => {
@@ -58,7 +59,9 @@ test('the document carries the policy, not just the API', async ({ page }) => {
 });
 
 test('the app loads and runs under it', async ({ page }) => {
-  await page.goto('/');
+  // Through the form: the group's name only shows once the keys that open it
+  // are on the device, and the login screen is a screen the policy covers too.
+  await signIn(page);
   await page.getByText('Trip').waitFor();
   await page.goto(`/g/${GROUP}`);
   await page.getByRole('button', { name: 'Invite link' }).waitFor();

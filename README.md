@@ -151,13 +151,12 @@ grep -i 'a description you know is in there' /tmp/check.sql   # must find nothin
 `pnpm --filter server test` pins the sealed tables to explicit column lists, so
 a plaintext column reappearing fails in CI rather than in the dump.
 
-**Existing groups** still hold a readable name after migration 0009 until a
-member syncs: the first member holding the group's newest key seals it and the
-readable column is nulled in the same write. Once
-`select id from groups where name_ct is null` comes back empty, run the
-follow-up described at the top of that migration file, which makes the sealed
-columns required and drops the readable one. Old backups keep the old names;
-nothing can take those back.
+A deployment from before names were sealed migrates in two steps, like
+per-entry keys did: 0009 adds the sealed columns, every group is sealed by
+the first member to sync holding its newest key, and 0010 — once
+`select id from groups where name_ct is null` comes back empty — makes the
+sealed columns required and drops the readable one. Old backups keep the old
+names; nothing can take those back.
 
 ## Schema changes
 

@@ -17,15 +17,10 @@
 -- the name — so it is removed here rather than left for a dump to find.
 -- JSON_REMOVE on a row without the key is a no-op, so re-running is safe.
 --
--- The follow-up, once every group has been sealed (`select id from groups
--- where name_ct is null` comes back empty), is the same shape as 0006:
---
---   ALTER TABLE `groups` MODIFY COLUMN `name_ct` varchar(768) NOT NULL;
---   ALTER TABLE `groups` MODIFY COLUMN `name_iv` varchar(32) NOT NULL;
---   ALTER TABLE `groups` MODIFY COLUMN `name_epoch` int NOT NULL;
---   ALTER TABLE `groups` DROP COLUMN `name`;
---
--- Not in this file, deliberately: MySQL refuses MODIFY ... NOT NULL while any
+-- The follow-up is 0010, the same shape as 0006: once every group has been
+-- sealed (`select id from groups where name_ct is null` comes back empty) it
+-- makes the sealed columns required and drops the readable one. Kept apart
+-- from this file deliberately: MySQL refuses MODIFY ... NOT NULL while any
 -- row is null, and a group whose members never sync again would leave it
 -- refusing forever. That is an operator's decision, taken when the count is
 -- known, not one a migration can make.
