@@ -489,6 +489,7 @@ export const de: Catalogue = {
   'import.warning.several_payers': '{row}: mehrere Zahlende — Aufteilung anteilig rekonstruiert',
   'import.warning.split_totals_mismatch':
     '{row}: die Aufteilung passt nicht zum Betrag — nach dem Import prüfen',
+  'import.warning.unreadable_amount': '{row}: der Betrag ist nicht lesbar — übersprungen',
 
   // --- receipts ------------------------------------------------------------
   'receiptScan.start': 'Scannen',

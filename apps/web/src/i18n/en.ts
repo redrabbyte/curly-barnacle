@@ -509,6 +509,7 @@ export const en = {
   'import.warning.nobody_paid': '{row}: nobody paid — skipped',
   'import.warning.several_payers': '{row}: several payers — split reconstructed proportionally',
   'import.warning.split_totals_mismatch': '{row}: split totals do not match the amount — check after importing',
+  'import.warning.unreadable_amount': '{row}: the amount could not be read — skipped',
 
   // --- receipts ------------------------------------------------------------
   // Deliberately just the verb: it sits beside the currency, and the icon and

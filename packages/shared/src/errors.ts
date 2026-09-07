@@ -133,6 +133,7 @@ export const IMPORT_WARNINGS = [
   'nobody_paid',
   'several_payers',
   'split_totals_mismatch',
+  'unreadable_amount',
 ] as const;
 
 export type ImportWarningCode = (typeof IMPORT_WARNINGS)[number];

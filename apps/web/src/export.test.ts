@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { ExpenseDto, MemberDto, PaymentDto } from '@spendapp/shared';
+import { parseImport, type ExpenseDto, type MemberDto, type PaymentDto } from '@spendapp/shared';
 import { toCsv } from './export';
 
 const members: MemberDto[] = [
@@ -51,5 +51,76 @@ describe('csv export', () => {
   it('still quotes commas and quotes the ordinary way', () => {
     expect(csv({ description: 'Lunch, twice' })).toContain('"Lunch, twice"');
     expect(csv({ description: 'He said "hi"' })).toContain('"He said ""hi"""');
+  });
+});
+
+/**
+ * The half of the contract the export side alone cannot check.
+ *
+ * `toCsv` and the importer are the two ends of one format, and they were free
+ * to drift: the importer's own tests used a hand-written fixture rather than
+ * this function's output, so an export that no import could read passed both
+ * suites. Reading a real export back is the only test that pins them together.
+ */
+describe('csv round trip', () => {
+  it('reads back an export of its own', () => {
+    const lunch = expense({
+      splits: [
+        { userId: 'u1', paidMinor: 1000, owedMinor: 400 },
+        { userId: 'u2', paidMinor: 0, owedMinor: 600 },
+      ],
+    });
+    const settle = {
+      id: 'p1',
+      groupId: 'g1',
+      fromUser: 'u2',
+      toUser: 'u1',
+      currency: 'EUR',
+      amountMinor: 600,
+      paidOn: '2026-01-03',
+      note: 'settling',
+      createdBy: 'u2',
+    } as PaymentDto;
+
+    const parsed = parseImport(toCsv([lunch], [settle], members, resolve));
+
+    expect(parsed.format).toBe('spendapp');
+    expect(parsed.warnings).toEqual([]);
+    expect(parsed.members).toEqual(['Ada', 'Grace']);
+    expect(parsed.entries).toEqual([
+      {
+        kind: 'expense',
+        date: '2026-01-02',
+        description: 'Lunch',
+        category: 'food',
+        currency: 'EUR',
+        amountMinor: 1000,
+        note: '',
+        splits: [
+          { member: 'Ada', paidMinor: 1000, owedMinor: 400 },
+          { member: 'Grace', paidMinor: 0, owedMinor: 600 },
+        ],
+      },
+      {
+        kind: 'payment',
+        date: '2026-01-03',
+        from: 'Grace',
+        to: 'Ada',
+        currency: 'EUR',
+        amountMinor: 600,
+        note: 'settling',
+      },
+    ]);
+  });
+
+  it('survives a currency whose minor unit is not two digits', () => {
+    // "1234 JPY" has no decimal point at all, and 1.234 KWD has three.
+    const yen = expense({
+      currency: 'JPY',
+      amountMinor: 1234,
+      splits: [{ userId: 'u1', paidMinor: 1234, owedMinor: 1234 }],
+    });
+    const [back] = parseImport(toCsv([yen], [], members, resolve)).entries;
+    expect(back).toMatchObject({ currency: 'JPY', amountMinor: 1234 });
   });
 });

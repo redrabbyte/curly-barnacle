@@ -88,14 +88,27 @@ export function parseCsv(text: string): string[][] {
 
 const isBlank = (row: string[]): boolean => row.every((c) => c.trim() === '');
 
-/** Decimal string (possibly negative, possibly blank) to minor units. */
+/**
+ * A money cell to minor units, or null when it is not a number this can read.
+ *
+ * Two shapes, because two formats reach here: Splitwise writes a bare decimal,
+ * and this app's own export writes `formatMinor` — the amount with its currency
+ * after it, "22.00 EUR". Reading only the bare form meant every row of our own
+ * export failed here and was skipped, which is how a whole file could import as
+ * nothing at all.
+ *
+ * A trailing code that disagrees with the row's currency column is refused
+ * rather than ignored. The two disagreeing means the file was edited by hand,
+ * and taking the number under the row's currency would change what the amount
+ * means without saying so.
+ */
 function toMinor(value: string, currency: string): number | null {
-  const t = value.trim();
-  if (t === '') return null;
-  if (!/^-?\d+(\.\d+)?$/.test(t)) return null;
+  const m = /^(-?\d+(?:\.\d+)?)(?:\s+([A-Za-z]{3}))?$/.exec(value.trim());
+  if (!m) return null;
+  if (m[2] && m[2].toUpperCase() !== currency.toUpperCase()) return null;
   const scale = 10 ** minorUnitExponent(currency);
   // Round rather than truncate: 0.1+0.2-style float error would drop a cent.
-  return Math.round(parseFloat(t) * scale);
+  return Math.round(parseFloat(m[1]!) * scale);
 }
 
 export function detectFormat(rows: string[][]): 'spendapp' | 'splitwise' | null {
@@ -230,10 +243,21 @@ function parseSpendApp(rows: string[][]): ParsedImport {
   for (const row of rows.slice(rows.indexOf(header) + 1)) {
     if (isBlank(row)) continue;
     const type = at(row, 'type');
+    // Named for the warnings, which are read next to the row they are about.
+    const name = at(row, 'description') || at(row, 'note') || at(row, 'date');
     const currency = at(row, 'currency').toUpperCase();
-    if (!/^[A-Z]{3}$/.test(currency)) continue;
+    if (!/^[A-Z]{3}$/.test(currency)) {
+      warnings.push({ row: name, code: 'unrecognised_currency', currency: at(row, 'currency') });
+      continue;
+    }
+    // Said out loud rather than skipped quietly. A silent `continue` here is
+    // what turned a format mismatch into an import of nothing, with no row to
+    // point at and nothing on screen to explain it.
     const amountMinor = toMinor(at(row, 'amount'), currency);
-    if (amountMinor === null) continue;
+    if (amountMinor === null) {
+      warnings.push({ row: name, code: 'unreadable_amount' });
+      continue;
+    }
     const member = at(row, 'member');
     seeMember(member);
 

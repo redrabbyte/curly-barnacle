@@ -16,10 +16,14 @@ const SPLITWISE = `Datum,Beschreibung,Kategorie,Kosten,Währung,Ines Giner,ARN,L
 2026-08-02,Gesamtbilanz, , ,USD,0.00,0.00,0.00,0.00
 `;
 
+// Written the way `toCsv` writes it — every money cell carries its currency,
+// because that is what `formatMinor` produces. The fixture used to hold bare
+// decimals, which no export has ever contained, and that is precisely why the
+// format going unread here went unnoticed.
 const SPENDAPP = `type,date,description,category,currency,amount,member,counterparty,paid,owed,note,recorded_by
-expense,2026-07-30T18:20:00.000Z,Dinner,food,EUR,40.00,Lukas,,40.00,20.00,Birthday,Lukas
-expense,2026-07-30T18:20:00.000Z,Dinner,food,EUR,40.00,Anna,,0.00,20.00,Birthday,Lukas
-payment,2026-07-31,payment,,EUR,20.00,Anna,Lukas,20.00,,,Anna
+expense,2026-07-30T18:20:00.000Z,Dinner,food,EUR,40.00 EUR,Lukas,,40.00 EUR,20.00 EUR,Birthday,Lukas
+expense,2026-07-30T18:20:00.000Z,Dinner,food,EUR,40.00 EUR,Anna,,0.00 EUR,20.00 EUR,Birthday,Lukas
+payment,2026-07-31,payment,,EUR,20.00 EUR,Anna,Lukas,20.00 EUR,,,Anna
 `;
 
 const expenses = (t: string): ImportedExpense[] =>
@@ -133,5 +137,28 @@ describe('spendapp import', () => {
 
   it('collects every member named in the file', () => {
     expect(parseImport(SPENDAPP).members).toEqual(['Lukas', 'Anna']);
+  });
+
+  it('reads a file whose money cells carry no currency', () => {
+    // Hand-made files and older exports write a bare decimal; both shapes mean
+    // the same thing, and the currency column is what decides the entry.
+    const bare = SPENDAPP.replace(/ EUR(?=,|$)/gm, '');
+    expect(expenses(bare)[0]!.amountMinor).toBe(4000);
+    expect(parseImport(bare).warnings).toEqual([]);
+  });
+
+  it('refuses an amount whose currency contradicts the row', () => {
+    // Importing "40.00 USD" as EUR would change what the number means without
+    // saying so, so the row is dropped and named instead.
+    const mixed = SPENDAPP.replace('EUR,40.00 EUR,Lukas', 'EUR,40.00 USD,Lukas');
+    expect(parseImport(mixed).warnings).toContainEqual({ row: 'Dinner', code: 'unreadable_amount' });
+  });
+
+  it('says which row it could not read, rather than skipping it in silence', () => {
+    // The failure this exists for: a whole file that imports as nothing, with
+    // no entries, no members and — until now — nothing on screen to explain it.
+    const junk = SPENDAPP.replace(/40\.00 EUR,Lukas/, 'forty euros,Lukas');
+    const parsed = parseImport(junk);
+    expect(parsed.warnings).toContainEqual({ row: 'Dinner', code: 'unreadable_amount' });
   });
 });
