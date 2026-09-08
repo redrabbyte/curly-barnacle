@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { test as base, type BrowserContext, type Route } from '@playwright/test';
 import {
   admitSchema,
+  claimRequestSchema,
   grantEntriesSchema,
   deriveKek,
   deriveMasterKey,
@@ -138,6 +139,8 @@ export interface ApiState {
     {
       userId: string;
       displayName: string;
+      /** Asking to be let in, or — from inside — that a name here is them. */
+      kind?: 'join' | 'claim';
       claimMemberId: string | null;
       requestedAt: string;
       shareHistory?: boolean;
@@ -767,11 +770,17 @@ export async function installApi(context: BrowserContext, state: ApiState): Prom
       // digits itself rather than trusting a number the server computed. The
       // token itself never comes back — only its hash, which is all that is
       // stored and all the joiner hashes to.
+      const own = queue.find((r) => r.userId === ME.id && r.kind === 'claim' && r.claimMemberId);
       return json(route, {
+        // A claim of the caller's own comes back whoever they are: it is the
+        // one row in this queue that is theirs to see.
+        mine: own ? { claimMemberId: own.claimMemberId, status: own.status ?? 'pending' } : null,
         requests: queue.map((r) => ({
           publicKey: TEST_PUBLIC_KEY,
-          inviteTokenHash: INVITE_TOKEN_HASH,
+          // Null on a claim, like the real handler: there is no link behind it.
+          inviteTokenHash: r.kind === 'claim' ? null : INVITE_TOKEN_HASH,
           shareHistory: true,
+          kind: 'join',
           // Declines stay listed so they can be undone; the real handler drops
           // them after 30 days, which nothing in a test run reaches.
           status: 'pending',
@@ -779,6 +788,41 @@ export async function installApi(context: BrowserContext, state: ApiState): Prom
           ...r,
         })),
       });
+    }
+
+    const claimRequestMatch = /^\/api\/groups\/([^/]+)\/claim-requests$/.exec(path);
+    if (claimRequestMatch) {
+      const groupId = claimRequestMatch[1]!;
+      const queue = state.joinRequests.get(groupId) ?? [];
+      const others = queue.filter((r) => !(r.userId === ME.id && r.kind === 'claim'));
+      if (method === 'DELETE') {
+        state.joinRequests.set(groupId, others);
+        return json(route, { status: 'withdrawn' });
+      }
+      const data = check(claimRequestSchema, body());
+      if (!data) return;
+      const claimable = (state.members.get(groupId) ?? []).some(
+        (m) =>
+          m.userId === data.claimMemberId &&
+          !m.aliasOf &&
+          (m.isPlaceholder ? m.leftAt === null : m.leftAt !== null),
+      );
+      // Answered now rather than left in the queue for an admin to discover.
+      if (!claimable) return json(route, { error: 'not_claimable' }, 409);
+      // Changing your mind before anybody has answered is the same act as
+      // asking, so it overwrites rather than piling up a second row.
+      state.joinRequests.set(groupId, [
+        ...others,
+        {
+          userId: ME.id,
+          displayName: ME.displayName,
+          kind: 'claim',
+          claimMemberId: data.claimMemberId,
+          requestedAt: new Date().toISOString(),
+          status: 'pending',
+        },
+      ]);
+      return json(route, { status: 'pending' });
     }
 
     const admitMatch = /^\/api\/groups\/([^/]+)\/admit$/.exec(path);
@@ -815,22 +859,60 @@ export async function installApi(context: BrowserContext, state: ApiState): Prom
       const [, groupId, userId] = decideMatch as unknown as [string, string, string];
       const queue = state.joinRequests.get(groupId) ?? [];
       const decision = (body() as { decision?: string } | null)?.decision;
+      const kind = (body() as { kind?: 'join' | 'claim' } | null)?.kind ?? 'join';
+
+      /**
+       * A name being put right by somebody already in the group. No membership
+       * is granted: the claimed row retires pointing at them, exactly as
+       * `claimPlaceholder` leaves it, so every split goes on naming the old id
+       * and readers follow the alias.
+       */
+      if (kind === 'claim') {
+        const asked = queue.find((r) => r.userId === userId && r.kind === 'claim');
+        state.joinRequests.set(
+          groupId,
+          decision === 'reject'
+            ? queue.map((r) =>
+                r.userId === userId && r.kind === 'claim'
+                  ? { ...r, status: 'rejected' as const, decidedAt: new Date(0).toISOString() }
+                  : r,
+              )
+            : queue.filter((r) => !(r.userId === userId && r.kind === 'claim')),
+        );
+        if (decision === 'approve' && asked?.claimMemberId) {
+          const target = asked.claimMemberId;
+          state.members.set(
+            groupId,
+            (state.members.get(groupId) ?? []).map((m) =>
+              m.userId === target
+                ? { ...m, leftAt: new Date().toISOString(), aliasOf: userId, version: bump(state, groupId) }
+                : m,
+            ),
+          );
+        }
+        return json(route, {
+          status: decision === 'approve' ? 'approved' : 'rejected',
+          publicKey: decision === 'approve' ? TEST_PUBLIC_KEY : null,
+        });
+      }
+
       // Declining marks the row rather than dropping it — the admin has to be
       // able to see what they just did, and take it back.
+      const isThem = (r: { userId: string; kind?: string }) => r.userId === userId && r.kind !== 'claim';
       state.joinRequests.set(
         groupId,
         decision === 'reject'
           ? queue.map((r) =>
-              r.userId === userId ? { ...r, status: 'rejected' as const, decidedAt: new Date(0).toISOString() } : r,
+              isThem(r) ? { ...r, status: 'rejected' as const, decidedAt: new Date(0).toISOString() } : r,
             )
-          : queue.filter((r) => r.userId !== userId),
+          : queue.filter((r) => !isThem(r)),
       );
       if (decision === 'approve') {
         // Their key is on file — that is why approve can hand it back — so a
         // rotation from here on can wrap to them.
         state.publicKeys.set(userId, TEST_PUBLIC_KEY);
         const list = state.members.get(groupId) ?? [];
-        const req = queue.find((r) => r.userId === userId);
+        const req = queue.find(isThem);
         list.push({
           groupId,
           userId,
@@ -1056,15 +1138,23 @@ export async function installApi(context: BrowserContext, state: ApiState): Prom
       // second visit to the same link say "already asked" rather than draw
       // the join screen again.
       const queue = state.joinRequests.get(groupId ?? '') ?? [];
-      if (!queue.some((r) => r.userId === ME.id)) {
+      const asked = (body() as { claimMemberId?: string | null }).claimMemberId;
+      const standing = queue.find((r) => r.userId === ME.id && r.kind !== 'claim');
+      if (!standing) {
         queue.push({
           userId: ME.id,
           displayName: ME.displayName,
-          claimMemberId: (body() as { claimMemberId?: string }).claimMemberId ?? null,
+          kind: 'join',
+          claimMemberId: asked ?? null,
           requestedAt: new Date().toISOString(),
           status: 'pending',
         });
         state.joinRequests.set(groupId ?? '', queue);
+      } else if (asked !== undefined && standing.status !== 'rejected') {
+        // Asking again does not spend a second use of the link, but the name
+        // on the request is still open to correction until an admin decides.
+        // Absent means "not talking about names" and leaves the pick alone.
+        standing.claimMemberId = asked;
       }
       state.inviteSpent = true;
       return json(route, { status: 'pending', groupId: groupId ?? '' });
@@ -1092,7 +1182,9 @@ export async function installApi(context: BrowserContext, state: ApiState): Prom
       // server decides it: what is true of the caller beats what is true of
       // the link, so the person who spent it is never told a stranger did.
       const myMembership = members.find((m) => m.userId === ME.id && m.leftAt === null && !m.isPlaceholder);
-      const myRequest = (state.joinRequests.get(groupId ?? '') ?? []).find((r) => r.userId === ME.id);
+      const myRequest = (state.joinRequests.get(groupId ?? '') ?? []).find(
+        (r) => r.userId === ME.id && r.kind !== 'claim',
+      );
       const spent = state.inviteSpent ? 'spent' : 'open';
       const inviteState = !state.signedIn
         ? spent
@@ -1111,6 +1203,9 @@ export async function installApi(context: BrowserContext, state: ApiState): Prom
         state: inviteState,
         groupId: inviteState === 'joined' || inviteState === 'pending' ? (groupId ?? null) : null,
         claimable: state.signedIn && live ? claimable : [],
+        // What they picked last time, so coming back to the link shows the
+        // choice as it stands rather than as it looked before they made it.
+        claimMemberId: inviteState === 'pending' ? (myRequest?.claimMemberId ?? null) : null,
         wasMember: state.signedIn && live && mine ? { userId: mine.userId, displayName: mine.displayName } : null,
       });
     }

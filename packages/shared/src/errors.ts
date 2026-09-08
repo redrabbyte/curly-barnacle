@@ -44,6 +44,12 @@ export const API_ERRORS = [
   'already_you',
   'not_claimable',
   'already_claimed',
+  // An admin approved a claim that had already changed underneath them: the
+  // asker picked a different name between the queue being drawn and the
+  // button being pressed. Refused rather than applied, because what the admin
+  // agreed to — these entries, moving to this person — is no longer what
+  // approving would do.
+  'claim_changed',
   'still_in_group',
   'not_a_placeholder',
   'no_wraps_for_members',

@@ -78,6 +78,13 @@
       "when": 1788776918907,
       "tag": "0010_group_name_required",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "5",
+      "when": 1788864793771,
+      "tag": "0011_claim_requests",
+      "breakpoints": true
     }
   ]
 }

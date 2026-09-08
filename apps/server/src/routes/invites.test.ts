@@ -106,8 +106,31 @@ d('invites', () => {
       headers: { 'x-requested-with': 'spendapp' },
       payload: { token },
     });
-  const join = (token: string, headers: Record<string, string>) =>
-    app!.inject({ method: 'POST', url: '/api/invites/join', headers, payload: { token } });
+  const join = (token: string, headers: Record<string, string>, claim?: string | null) =>
+    app!.inject({
+      method: 'POST',
+      url: '/api/invites/join',
+      headers,
+      // Absent unless a caller says something about a name — which is the
+      // difference the update path turns on.
+      payload: claim === undefined ? { token } : { token, claimMemberId: claim },
+    });
+
+  /** A name in the group with no account behind it, for a claim to point at. */
+  async function placeholder(id: string, name: string): Promise<string> {
+    await db
+      .insert(schema.users)
+      .values({ id, displayName: name, isPlaceholder: true, placeholderGroupId: GROUP, createdAt: new Date() });
+    await db.insert(schema.groupMembers).values({ groupId: GROUP, userId: id, joinedAt: new Date() });
+    return id;
+  }
+  const requestFor = async (userId: string) =>
+    (
+      await db
+        .select()
+        .from(schema.joinRequests)
+        .where(and(eq(schema.joinRequests.groupId, GROUP), eq(schema.joinRequests.userId, userId)))
+    )[0];
 
   it('stores no usable token — a dump of the table admits nobody', async () => {
     const token = await createInvite();
@@ -289,6 +312,98 @@ d('invites', () => {
       expect((await state(token, joiner)).state).toBe('declined');
       // And still the truth for everybody else: the use is gone either way.
       expect((await state(token, await asUser(OTHER))).state).toBe('spent');
+    });
+  });
+
+  /**
+   * The pick, while it is still only a pick.
+   *
+   * Choosing a name happens in the worst possible position: a list of
+   * strangers' names, for a group nobody can see yet, seconds after following
+   * a link. Once approved it is a stretch of the ledger that has changed
+   * hands; while it is a request it is nobody's history yet, so it stays open
+   * to correction — and correcting it must not cost a second use of the link.
+   */
+  describe('changing the name on a request nobody has decided', () => {
+    it('rewrites the pick without lodging a second request or spending a use', async () => {
+      const robin = await placeholder('44444444-4444-4444-8444-444444444444', 'Robin');
+      const sam = await placeholder('55555555-5555-4555-8555-555555555555', 'Sam');
+      const token = await createInvite();
+      const joiner = await asUser(JOINER);
+
+      await join(token, joiner, robin);
+      expect((await requestFor(JOINER))!.claimMemberId).toBe(robin);
+
+      const again = await join(token, joiner, sam);
+      expect(again.statusCode).toBe(200);
+      expect(again.json()).toMatchObject({ status: 'pending' });
+      expect((await requestFor(JOINER))!.claimMemberId).toBe(sam);
+      // One row, one use. Asking again is not a second ask.
+      const rows = await db.select().from(schema.joinRequests).where(eq(schema.joinRequests.groupId, GROUP));
+      expect(rows).toHaveLength(1);
+      const [invite] = await db.select().from(schema.invites);
+      expect(invite!.useCount).toBe(1);
+    });
+
+    it('clears the pick when they decide to come in as themselves after all', async () => {
+      const robin = await placeholder('44444444-4444-4444-8444-444444444444', 'Robin');
+      const token = await createInvite();
+      const joiner = await asUser(JOINER);
+      await join(token, joiner, robin);
+
+      await join(token, joiner, null);
+      expect((await requestFor(JOINER))!.claimMemberId).toBeNull();
+    });
+
+    it('leaves the pick alone when the caller says nothing about it', async () => {
+      // An older client re-following the link says only "join". Silence is not
+      // a choice to abandon the name they picked on the first visit.
+      const robin = await placeholder('44444444-4444-4444-8444-444444444444', 'Robin');
+      const token = await createInvite();
+      const joiner = await asUser(JOINER);
+      await join(token, joiner, robin);
+
+      await join(token, joiner);
+      expect((await requestFor(JOINER))!.claimMemberId).toBe(robin);
+    });
+
+    it('tells the joiner which name their standing request is on', async () => {
+      // The landing page seeds its picker from this: coming back to the link
+      // has to show the choice as it stands, not as it looked before one was
+      // made.
+      const robin = await placeholder('44444444-4444-4444-8444-444444444444', 'Robin');
+      const token = await createInvite();
+      const joiner = await asUser(JOINER);
+      await join(token, joiner, robin);
+
+      const res = await lookup(token);
+      expect(res.statusCode).toBe(200);
+      // Anonymously, there is no request to speak of and nothing to say.
+      expect((res.json() as { claimMemberId: string | null }).claimMemberId).toBeNull();
+
+      const mine = await app!.inject({
+        method: 'POST',
+        url: '/api/invites/lookup',
+        headers: { ...joiner },
+        payload: { token },
+      });
+      expect((mine.json() as { claimMemberId: string | null }).claimMemberId).toBe(robin);
+    });
+
+    it('refuses to move a decided request', async () => {
+      const robin = await placeholder('44444444-4444-4444-8444-444444444444', 'Robin');
+      const sam = await placeholder('55555555-5555-4555-8555-555555555555', 'Sam');
+      const token = await createInvite();
+      const joiner = await asUser(JOINER);
+      await join(token, joiner, robin);
+      await db
+        .update(schema.joinRequests)
+        .set({ status: 'rejected', decidedBy: ADMIN, decidedAt: new Date() })
+        .where(and(eq(schema.joinRequests.groupId, GROUP), eq(schema.joinRequests.userId, JOINER)));
+
+      const res = await join(token, joiner, sam);
+      expect(res.statusCode).toBe(403);
+      expect((await requestFor(JOINER))!.claimMemberId).toBe(robin);
     });
   });
 

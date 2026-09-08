@@ -148,7 +148,26 @@ export const joinRequests = mysqlTable(
   {
     groupId: id('group_id').notNull(),
     userId: id('user_id').notNull(),
-    inviteTokenHash: varchar('invite_token_hash', { length: 64 }).notNull(),
+    /**
+     * What is being asked for:
+     *
+     * - `join`  — let me into this group. Followed an invite link, or was
+     *   scanned in; the row is spent once an admin decides.
+     * - `claim` — I am already in, and one of the names here is me. The same
+     *   queue and the same approval, because it is the same decision about the
+     *   same ledger; only the asker's standing differs.
+     *
+     * Part of the key rather than a flag on one row per person: a member who
+     * joined months ago still has their decided `join` row, and overwriting it
+     * to ask about a name would erase how they got in.
+     */
+    kind: varchar('kind', { length: 16 }).notNull().default('join'),
+    /**
+     * Which link they followed. Null on a `claim`, which is asked from inside
+     * the group and carries no capability — there is nothing to spend, and
+     * nothing for an admin to read digits against.
+     */
+    inviteTokenHash: varchar('invite_token_hash', { length: 64 }),
     // Set when the joiner is taking over a placeholder instead of joining
     // fresh; the claim is replayed at approval time, not at request time.
     claimMemberId: id('claim_member_id'),
@@ -157,7 +176,10 @@ export const joinRequests = mysqlTable(
     decidedBy: id('decided_by'),
     decidedAt: ts('decided_at'),
   },
-  (t) => [primaryKey({ columns: [t.groupId, t.userId] }), index('jr_group_status').on(t.groupId, t.status)],
+  (t) => [
+    primaryKey({ columns: [t.groupId, t.userId, t.kind] }),
+    index('jr_group_status').on(t.groupId, t.status),
+  ],
 );
 
 /**

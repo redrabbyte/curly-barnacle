@@ -10,9 +10,16 @@ const ADMIN = 'aaaa0000-0000-4000-8000-00000000000b';
  * sits in the chat, and people tap it again to see whether anything happened.
  * The landing page used to answer every one of these with the join screen —
  * inviter, group name, and an "are you one of these people?" picker — which
- * read like a second chance to choose a name. It was not: the server returns
- * the request that already exists rather than rewriting it, so the picker
- * moved nothing. These specs pin what each of those visits says instead.
+ * read like a second chance to choose a name. It was not: the picker moved
+ * nothing, because the server returned the standing request rather than
+ * rewriting it.
+ *
+ * The join screen is still gone. What replaced the inert picker is a narrower
+ * thing on the waiting screen: the pick, and only the pick, is still open to
+ * correction until an admin decides — asking twice must not spend a second use
+ * of the link, but a name chosen in ten seconds from a list of strangers'
+ * names is the easiest mistake in this flow to make. These specs pin both
+ * halves.
  */
 test.beforeEach(async ({ api }) => {
   seedGroup(api, GROUP, 'Trip', [
@@ -35,10 +42,44 @@ test('a second visit shows the request already waiting, not the picker again', a
   await page.goto('/');
   await page.goto('/invite#tokAAAAAAAAAAAAAAAAAA.VHJpcA');
   await expect(page.getByText(/already asked to join/i)).toBeVisible();
-  // The one thing that made the old screen misleading: a name to pick, which
-  // could not change the request that was already lodged.
+  // The join screen itself does not come back: no second Join button, and no
+  // picker pretending the whole choice is open again.
   await expect(page.locator('#claim')).toHaveCount(0);
   await expect(page.getByRole('button', { name: /join group/i })).toHaveCount(0);
+});
+
+test('the name on a waiting request can still be changed', async ({ page, api }) => {
+  await signIn(page);
+  await page.goto('/invite#tokAAAAAAAAAAAAAAAAAA.VHJpcA');
+  await page.locator('#claim').selectOption('aaaa0000-0000-4000-8000-000000000001');
+  await page.getByRole('button', { name: /join as this person/i }).click();
+  await expect(page.getByText(/Request sent/i)).toBeVisible();
+
+  // Away and back to the link, as somebody who has just realised they picked
+  // the wrong Robin would arrive: the request is still waiting, and it says
+  // which name it is waiting on.
+  await page.goto('/');
+  await page.goto('/invite#tokAAAAAAAAAAAAAAAAAA.VHJpcA');
+  await expect(page.getByText('You asked to join as Robin.')).toBeVisible();
+  const picker = page.locator('#claim-waiting');
+  await expect(picker).toHaveValue('aaaa0000-0000-4000-8000-000000000001');
+
+  // Back to joining as themselves, which is the correction that used to be
+  // impossible: an absent claim leaves a pick alone, so this sends an explicit
+  // "nobody" rather than saying nothing.
+  await picker.selectOption('');
+  await page.getByRole('button', { name: /change this/i }).click();
+  await expect
+    .poll(() => {
+      const asked = api.joinRequests.get(GROUP)?.find((r) => r.userId === ME.id);
+      // `null` is the answer being checked for, so a missing row cannot be
+      // spelled the same way.
+      return asked ? asked.claimMemberId : 'no request at all';
+    })
+    .toBe(null);
+  // One request, still — asking again must not queue a second one, and the
+  // link's single use was spent on the first visit.
+  expect(api.joinRequests.get(GROUP)).toHaveLength(1);
 });
 
 test('a member following their own group’s link is taken into the group', async ({ page, api }) => {

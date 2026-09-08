@@ -11,6 +11,13 @@ notifications, and a full audit trail with revert.
   database dump is opaque. See "Encryption" below for what that achieves.
 - **Groups & invites** — username + password; join by showing a QR code to a
   member in person, or by a 128-bit capability invite link an admin approves.
+  A joiner can take over a name already in the ledger — a placeholder somebody
+  typed, or their own membership on an account they have lost. Picking one is
+  the easiest thing in the flow to get wrong, because it happens seconds after
+  following a link, for a group nobody can see yet: so the pick stays editable
+  while the request is undecided, and afterwards the same question can be asked
+  from inside the group, where the entries are on screen. Either way an admin
+  approves it, since a takeover moves everybody's balances.
 - **Expenses** — equal / exact / percentage / shares splits, multiple
   payers, notes, categories, multi-photo receipts (compressed + EXIF-stripped
   on device). The category is suggested from what the entry is called — a

@@ -173,7 +173,7 @@ test('a claim hands over its entries and opens nothing else', async ({ page, api
 
   await signIn(page);
   await page.goto(`/g/${GROUP}?tab=members`);
-  await expect(page.getByText(/Taking over Robin carries 1 entries/)).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByText(/Taking over Robin carries 1 entry\./)).toBeVisible({ timeout: 15_000 });
   // Nothing extra to disclose, so the collateral notice is not there at all.
   await expect(page.getByText(/also opens/)).toHaveCount(0);
 

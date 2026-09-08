@@ -24,6 +24,12 @@ interface InviteInfo {
   /** False: this link shares nothing recorded before it is accepted (§4.7). */
   shareHistory?: boolean;
   claimable: Claimable[];
+  /**
+   * The name a standing request has already picked, so coming back to the link
+   * shows the choice as it is rather than as it was before anybody made one.
+   * Only ever sent for `pending`.
+   */
+  claimMemberId?: string | null;
   /** Set when this account was in the group before and left (design §5). */
   wasMember?: { userId: string; displayName: string } | null;
   /**
@@ -49,6 +55,49 @@ function claimLabel(t: Translator, c: Claimable): string {
   return c.kind === 'departed' ? t('invitePage.claimLeft', { name: base }) : base;
 }
 
+/**
+ * The list of names, offered identically before the request and after it.
+ *
+ * One control rather than two: the choice is the same choice, and the only
+ * thing that differs is whether it is being made or corrected. Two copies of
+ * it would be two places for the wording of "no, just me" to drift.
+ */
+function ClaimSelect({
+  id,
+  info,
+  value,
+  onChange,
+  disabled,
+}: {
+  id: string;
+  info: InviteInfo;
+  value: string;
+  onChange: (value: string) => void;
+  disabled?: boolean;
+}) {
+  const t = useT();
+  return (
+    <select
+      id={id}
+      value={value}
+      disabled={disabled}
+      onChange={(e) => onChange(e.target.value)}
+      className="rounded border border-slate-300 px-2 py-1.5 text-sm disabled:opacity-50 dark:border-slate-600 dark:bg-slate-800"
+    >
+      <option value={AS_NEW}>
+        {info.wasMember
+          ? t('invitePage.rejoinAs', { name: info.wasMember.displayName })
+          : t('invitePage.joinAsNew')}
+      </option>
+      {info.claimable.map((c) => (
+        <option key={c.userId} value={c.userId}>
+          {claimLabel(t, c)}
+        </option>
+      ))}
+    </select>
+  );
+}
+
 export function InvitePage() {
   // From the fragment, or from the stash if this is the return leg of a login.
   // Read once: the fragment is cleared below, and re-reading it after that
@@ -63,6 +112,13 @@ export function InvitePage() {
   const navigate = useNavigate();
   const [info, setInfo] = useState<InviteInfo | null>(null);
   const [claim, setClaim] = useState<string>(AS_NEW);
+  /**
+   * The pick the server has on file, as against the one in the select. Two
+   * values rather than one because the difference is the whole affordance: it
+   * is what makes the button offer a change and what lets the line above it
+   * say what was actually asked for.
+   */
+  const [saved, setSaved] = useState<string>(AS_NEW);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [pending, setPending] = useState(false);
@@ -129,6 +185,10 @@ export function InvitePage() {
       // The same watcher the fresh-join path arms, so an approval that lands
       // while this page is open still opens the group by itself.
       setPendingGroupId(groupId);
+      // Whatever they picked last time, in both places: the sentence that says
+      // what was asked for, and the control that can still change it.
+      setClaim(info.claimMemberId ?? AS_NEW);
+      setSaved(info.claimMemberId ?? AS_NEW);
       void (async () => {
         if (groupName) await localDb.pendingNames.put({ groupId, name: groupName }).catch(() => {});
         // Re-derivable rather than remembered: the digits are a function of
@@ -154,7 +214,11 @@ export function InvitePage() {
     try {
       const res = await api<{ groupId: string; status: 'joined' | 'pending' }>('/api/invites/join', {
         method: 'POST',
-        body: claim === AS_NEW ? { token } : { token, claimMemberId: claim },
+        // `null`, never absent. On a request that already stands, saying
+        // nothing leaves the pick alone — which is right for a client that is
+        // not talking about names, and wrong for somebody who has just chosen
+        // to come in as themselves after all.
+        body: { token, claimMemberId: claim === AS_NEW ? null : claim },
       });
       // Spent, whichever way it went. Leaving it in the tab's storage would
       // hand the next person at this browser a working link.
@@ -164,6 +228,9 @@ export function InvitePage() {
       if (res.status === 'pending') {
         setPending(true);
         setPendingGroupId(res.groupId);
+        // Accepted: this is the name on the request now, so the button stops
+        // offering to change it to what it already is.
+        setSaved(claim);
         setBusy(false);
         // The push saying this was approved arrives before any key to open
         // the group's real name does. The worker titles it from here.
@@ -282,6 +349,47 @@ export function InvitePage() {
               </span>
             </div>
           )}
+          {/**
+           * The one moment the pick is still soft.
+           *
+           * Choosing a name happens in the worst possible position: a list of
+           * strangers' names, for a group nobody can see yet, in the ten
+           * seconds after following a link. Once approved it is a stretch of
+           * the ledger that has changed hands and only an admin can undo it —
+           * but while it is only a request, nothing has happened yet, so this
+           * needs no approval of its own. Same list, same question, and the
+           * ask itself is untouched: no second use of the link is spent, and
+           * the admin's queue keeps the request it already had.
+           */}
+          {info.claimable.length > 0 && (
+            <div className="flex w-full flex-col gap-2 rounded border border-slate-200 px-4 py-3 text-left dark:border-slate-700">
+              <label htmlFor="claim-waiting" className="text-sm font-medium text-slate-500 dark:text-slate-400">
+                {saved === AS_NEW
+                  ? t('invitePage.askedAsNew')
+                  : t('invitePage.askedAs', {
+                      name:
+                        info.claimable.find((c) => c.userId === saved)?.displayName ??
+                        t('invitePage.someone'),
+                    })}
+              </label>
+              <ClaimSelect
+                id="claim-waiting"
+                info={info}
+                value={claim}
+                onChange={setClaim}
+                disabled={busy}
+              />
+              <button
+                onClick={() => void join()}
+                disabled={busy || claim === saved}
+                className="self-start rounded border border-teal-700 px-3 py-1.5 text-sm font-medium text-teal-800 disabled:opacity-50 dark:border-teal-500 dark:text-teal-400"
+              >
+                {t('invitePage.changePick')}
+              </button>
+              <p className="text-xs text-slate-400">{t('invitePage.changeNote')}</p>
+              {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
+            </div>
+          )}
           <p className="text-sm text-slate-500 dark:text-slate-400">
             {t('invitePage.willOpen')}
           </p>
@@ -302,23 +410,7 @@ export function InvitePage() {
                   ? t('invitePage.alsoYou', { name: info.wasMember.displayName })
                   : t('invitePage.areYouOne')}
               </label>
-              <select
-                id="claim"
-                value={claim}
-                onChange={(e) => setClaim(e.target.value)}
-                className="rounded border border-slate-300 px-2 py-1.5 text-sm dark:border-slate-600 dark:bg-slate-800"
-              >
-                <option value={AS_NEW}>
-                  {info.wasMember
-                    ? t('invitePage.rejoinAs', { name: info.wasMember.displayName })
-                    : t('invitePage.joinAsNew')}
-                </option>
-                {info.claimable.map((c) => (
-                  <option key={c.userId} value={c.userId}>
-                    {claimLabel(t, c)}
-                  </option>
-                ))}
-              </select>
+              <ClaimSelect id="claim" info={info} value={claim} onChange={setClaim} />
               {nameMatch && claim === AS_NEW && (
                 <p className="text-xs text-amber-700 dark:text-amber-500">
                   {t('invitePage.nameClash', { name: nameMatch.displayName })}

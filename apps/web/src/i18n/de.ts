@@ -421,6 +421,7 @@ export const de: Catalogue = {
   'activity.payment.deleted': 'hat eine Zahlung gelöscht',
   'activity.member.added': 'hat {name} hinzugefügt',
   'activity.member.claimed': 'hat {name} übernommen',
+  'activity.member.unclaimed': 'hat {name} wieder freigegeben',
   'activity.member.restored': 'hat {name} zurückgeholt',
   'activity.import.created': {
     one: 'hat {count} Eintrag aus {source} importiert',
@@ -524,12 +525,16 @@ export const de: Catalogue = {
   'members.checkByVoice': 'Mündlich prüfen:',
   'members.waiting': 'Warten auf Freigabe ({count})',
   'members.wantsToTakeOver': 'möchte {name} übernehmen',
+  'members.saysTheyAre': 'ist schon in der Gruppe und sagt: „{name}“ bin ich',
   'members.aPlaceholder': 'einen Platzhalter',
   'members.wasHereBefore': 'Dieses Konto war schon einmal in dieser Gruppe.',
   'members.claimNameDiffers':
     'Sie möchten {claimed} übernehmen, haben sich aber als {asker} angemeldet. Gib das nur frei, wenn du weißt, dass das dieselbe Person ist.',
-  'members.claimBringsEntries':
-    'Die Übernahme von {name} umfasst {count} Einträge. Mit der Freigabe können sie diese lesen, sodass der übernommene Saldo nachvollziehbar ist.',
+  'members.claimBringsEntries': {
+    one: 'Die Übernahme von {name} umfasst {count} Eintrag. Mit der Freigabe kann er gelesen werden, sodass der übernommene Saldo nachvollziehbar ist.',
+    other:
+      'Die Übernahme von {name} umfasst {count} Einträge. Mit der Freigabe können sie gelesen werden, sodass der übernommene Saldo nachvollziehbar ist.',
+  },
   'members.approve': 'Freigeben',
   'members.approveAsk': 'Lies die Ziffern zuerst vor. Mit der Freigabe gibst du die Schlüssel zu allem heraus, was diese Gruppe aufgezeichnet hat.',
   'members.approveConfirm': 'Die Ziffern stimmen',
@@ -540,6 +545,7 @@ export const de: Catalogue = {
   'members.declined': 'Abgelehnt ({count})',
   'members.declinedOn': 'abgelehnt am {date}',
   'members.letThemIn': 'Doch hereinlassen',
+  'members.letThemHaveIt': 'Doch übernehmen lassen',
   'members.declinedNote':
     'Sie können nicht von sich aus erneut fragen, das hier ist also der einzige Weg zurück. Ablehnungen verschwinden nach 30 Tagen von hier.',
   'members.addInPerson': 'Jemanden persönlich hinzufügen',
@@ -561,6 +567,21 @@ export const de: Catalogue = {
   'members.noPlaceholders':
     'Noch niemand. Trag hier Leute ein, um Ausgaben mit ihnen zu teilen, bevor sie ein Konto haben.',
   'members.unclaimed': 'frei',
+  'members.isThisYou': 'Ist einer dieser Namen deiner?',
+  'members.isThisYouNote':
+    'Wer einen Namen übernimmt, bekommt alles, was auf ihn gebucht ist — und die Salden aller verschieben sich mit. Deshalb muss eine Administratorin oder ein Administrator es freigeben, wie bei jedem Beitritt. Namen mit „hat die Gruppe verlassen“ gehörten zu einem echten Konto: übernimm so einen nur, wenn er deiner war und du nicht mehr hineinkommst.',
+  'members.claimNobody': 'Keiner davon bin ich',
+  'members.claimLeft': '{name} — hat die Gruppe verlassen',
+  'members.claimAsk': 'Das bin ich',
+  'members.claimBringsMine': {
+    one: 'Dieser Name steht in {count} Eintrag — alles, was darauf gebucht ist, würde dir gehören.',
+    other: 'Dieser Name steht in {count} Einträgen — alles, was darauf gebucht ist, würde dir gehören.',
+  },
+  'members.claimWaiting': 'Du hast angefragt, {name} zu übernehmen.',
+  'members.claimWaitingNote': 'Die Freigabe steht noch aus. Es hat sich noch nichts verschoben.',
+  'members.claimWithdraw': 'Zurückziehen',
+  'members.claimDeclined':
+    'Deine Anfrage, {name} zu übernehmen, wurde abgelehnt. Frag nur noch einmal, wenn es ein Missverständnis war — sonst lass den Namen, wo er ist.',
   'members.namePlaceholder': 'Name',
   'members.add': 'Hinzufügen',
   'members.inviteNote':
@@ -589,6 +610,8 @@ export const de: Catalogue = {
     'Hinzugefügt — aber du bist selbst erst später dazugekommen, sie sehen also nur denselben Teil des Verlaufs wie du.',
   'members.shareFailed':
     'Hinzugefügt, aber die Gruppe konnte nicht mit ihnen geteilt werden ({reason}) — sie sehen noch nichts.',
+  'members.claimGrantFailed':
+    'Der Name ist übernommen, aber die Einträge dahinter konnten nicht übergeben werden ({reason}) — die Beträge sind zu sehen, wofür sie waren nicht.',
   'members.removedRotated':
     'Entfernt, und der Gruppenschlüssel wurde gewechselt — ab jetzt Geschriebenes können sie nicht mehr lesen.',
   'members.removedRotateFailed':
@@ -603,7 +626,13 @@ export const de: Catalogue = {
   'invitePage.requestSent':
     'Anfrage gesendet. Eine Administratorin oder ein Administrator dieser Gruppe muss sie freigeben, bevor du etwas sehen kannst.',
   'invitePage.requestWaiting':
-    'Du hast schon angefragt, dieser Gruppe beizutreten, und die Freigabe steht noch aus. Den Link noch einmal zu öffnen fragt nicht ein zweites Mal und ändert auch den gewählten Namen nicht.',
+    'Du hast schon angefragt, dieser Gruppe beizutreten, und die Freigabe steht noch aus. Den Link noch einmal zu öffnen fragt nicht ein zweites Mal — bis zur Entscheidung kannst du aber noch ändern, als wer du beitrittst.',
+  'invitePage.askedAs': 'Du hast angefragt, als {name} beizutreten.',
+  'invitePage.askedAsNew': 'Du hast angefragt, als neue Person beizutreten.',
+  'invitePage.someone': 'jemand',
+  'invitePage.changePick': 'Das ändern',
+  'invitePage.changeNote':
+    'Noch ist nichts übernommen — ein Name wechselt erst mit der Freigabe. Das hier zu ändern fragt nicht ein zweites Mal.',
   'invitePage.alreadyMember': 'Du bist schon in dieser Gruppe. Sie wird geöffnet …',
   'invitePage.spent':
     'Diesen Einladungslink hat schon jemand anderes benutzt. Ein Link gilt nur einmal — bitte die Gruppe um einen neuen.',
@@ -685,6 +714,8 @@ export const de: Catalogue = {
   'push.member.removed': '{actor} hat jemanden entfernt',
   'push.join.requested': '{actor} möchte beitreten',
   'push.join.approved': 'Deine Beitrittsanfrage wurde angenommen',
+  'push.claim.requested': '{actor} möchte einen Namen hier übernehmen',
+  'push.claim.approved': 'Der Name, den du angefragt hast, gehört jetzt dir',
   'push.you.removed': 'Du wurdest aus {group} entfernt',
   'push.you.promoted': 'Du bist jetzt Admin',
   'push.you.promoted.lastAdminLeft': 'Du bist jetzt Admin — die letzte Person mit Adminrechten ist gegangen',
@@ -714,6 +745,7 @@ export const de: Catalogue = {
   'error.already_you': 'Das bist du schon.',
   'error.not_claimable': 'Dieser Name kann nicht übernommen werden.',
   'error.already_claimed': 'Jemand hat diesen Namen bereits übernommen.',
+  'error.claim_changed': 'Die Anfrage nennt inzwischen einen anderen Namen. Sieh noch einmal nach, bevor du entscheidest.',
   'error.still_in_group': 'Diese Person ist noch in dieser Gruppe.',
   'error.not_a_placeholder': 'Das ist ein echtes Konto, kein eingetragener Name.',
   'error.no_wraps_for_members': 'Niemandem konnte Zugriff gegeben werden — versuch es noch einmal.',

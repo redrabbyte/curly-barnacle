@@ -196,8 +196,25 @@ export const inviteTokenSchema = z.object({ token: inviteToken });
  */
 export const inviteJoinSchema = z.object({
   token: inviteToken,
-  claimMemberId: uuid.optional(),
+  /**
+   * Nullable as well as optional, and the difference carries meaning: an
+   * absent key leaves a standing request's pick alone, `null` clears it back
+   * to joining as a new member. Following the same link twice must not wipe
+   * the name somebody chose on the first visit, so "say nothing" and "say
+   * nobody" cannot be the same wire value.
+   */
+  claimMemberId: uuid.nullable().optional(),
 });
+
+/**
+ * Asking to take over a name *after* the join — the mistake caught late.
+ *
+ * Same decision as the picker on the invite page and the same admin approves
+ * it; what differs is only that the asker is already in the group. Nothing
+ * here says which kinds of name are takeable: that is the server's list, and
+ * it is re-checked when the claim is applied rather than when it is asked for.
+ */
+export const claimRequestSchema = z.object({ claimMemberId: uuid });
 
 /**
  * What an invite link can still do *for whoever is asking* — the landing

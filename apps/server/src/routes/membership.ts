@@ -3,6 +3,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import {
   admitSchema,
+  claimRequestSchema,
   grantEntriesSchema,
   publishKeyCommitmentsSchema,
   publishKeysSchema,
@@ -13,10 +14,25 @@ import { isApiError } from '../lib/api-error.js';
 import { newestEpoch, storeSealedName } from '../lib/groupName.js';
 import { activeAdminIds, bumpGroupVersion, isAdmin, isMember, logActivity } from '../lib/groups.js';
 import { leaveGroup } from '../lib/leave.js';
-import { claimPlaceholder, restorePlaceholder, unclaimMember } from '../lib/members.js';
+import { claimPlaceholder, claimableMembers, restorePlaceholder, unclaimMember } from '../lib/members.js';
 import { notifyGroup, notifyUsers } from '../lib/notify.js';
 
-const decisionSchema = z.object({ decision: z.enum(['approve', 'reject']) });
+const decisionSchema = z.object({
+  decision: z.enum(['approve', 'reject']),
+  /** Which of the two questions is being answered (see `join_requests.kind`). */
+  kind: z.enum(['join', 'claim']).default('join'),
+  /**
+   * The name the admin's screen said this request was for.
+   *
+   * A pending request's pick can still change — that is the point of it being
+   * pending — and the admin is agreeing to a specific stretch of the ledger
+   * changing hands, having read on their own device which entries those are.
+   * Sending back what they saw turns a race into a refusal instead of an
+   * approval nobody meant. Absent from an older client, which is treated as
+   * before: no check.
+   */
+  expectClaimMemberId: z.string().uuid().nullable().optional(),
+});
 
 /**
  * How long a declined request stays visible to admins so it can be undone.
@@ -39,11 +55,17 @@ export async function membershipRoutes(app: FastifyInstance): Promise<void> {
     const { groupId } = req.params as { groupId: string };
     // 404 rather than 403 for non-members: existence is itself information.
     if (!(await isMember(req.user!.id, groupId))) return reply.code(404).send({ error: 'not_found' });
-    if (!(await isAdmin(req.user!.id, groupId))) return { requests: [] };
+    // Their own standing claim, admin or not. A member who has asked to take a
+    // name over has to be able to see that the ask is still waiting — from any
+    // device, after any reload — and to take it back. It is the one row in
+    // this queue that is theirs to know about.
+    const mine = await ownClaim(groupId, req.user!.id);
+    if (!(await isAdmin(req.user!.id, groupId))) return { requests: [], mine };
 
     const rows = await db
       .select({
         userId: schema.joinRequests.userId,
+        kind: schema.joinRequests.kind,
         claimMemberId: schema.joinRequests.claimMemberId,
         requestedAt: schema.joinRequests.requestedAt,
         displayName: schema.users.displayName,
@@ -96,12 +118,17 @@ export async function membershipRoutes(app: FastifyInstance): Promise<void> {
       );
 
     return {
+      mine,
       requests: rows.map(({ previousJoinedAt, ...r }) => ({
         ...r,
         requestedAt: r.requestedAt.toISOString(),
         decidedAt: r.decidedAt?.toISOString() ?? null,
         shareHistory: r.shareHistory ?? true, // invite gone: fall back to the norm
-        previouslyMember: previousJoinedAt !== null,
+        // Only ever interesting about somebody asking to be let in. A claim is
+        // asked from inside the group, so the membership row this joins to is
+        // simply their current one and saying "was here before" of it would be
+        // true of everybody.
+        previouslyMember: r.kind === 'join' && previousJoinedAt !== null,
       })),
     };
   });
@@ -151,11 +178,13 @@ export async function membershipRoutes(app: FastifyInstance): Promise<void> {
     const parsed = decisionSchema.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: 'invalid_input' });
 
-    const rows = await db
-      .select()
-      .from(schema.joinRequests)
-      .where(and(eq(schema.joinRequests.groupId, groupId), eq(schema.joinRequests.userId, userId)))
-      .limit(1);
+    const kind = parsed.data.kind;
+    const isThisRequest = and(
+      eq(schema.joinRequests.groupId, groupId),
+      eq(schema.joinRequests.userId, userId),
+      eq(schema.joinRequests.kind, kind),
+    );
+    const rows = await db.select().from(schema.joinRequests).where(isThisRequest).limit(1);
     const request = rows[0];
     // A declined request can still be approved: declining is one click, it is
     // final for the joiner, and until now it could not be taken back by the
@@ -167,21 +196,65 @@ export async function membershipRoutes(app: FastifyInstance): Promise<void> {
     const decided = { status: parsed.data.decision === 'approve' ? 'approved' : 'rejected', decidedBy: adminId, decidedAt: now };
 
     if (parsed.data.decision === 'reject') {
-      await db
-        .update(schema.joinRequests)
-        .set(decided)
-        .where(and(eq(schema.joinRequests.groupId, groupId), eq(schema.joinRequests.userId, userId)));
+      await db.update(schema.joinRequests).set(decided).where(isThisRequest);
       return { status: 'rejected' as const };
+    }
+
+    // Approving is agreeing to a named thing. If the ask changed while the
+    // queue was on screen, the admin is answering a question they were not
+    // shown — so this refuses rather than applies, and their next poll draws
+    // what is actually being asked.
+    if (
+      parsed.data.expectClaimMemberId !== undefined &&
+      (request.claimMemberId ?? null) !== parsed.data.expectClaimMemberId
+    ) {
+      return reply.code(409).send({ error: 'claim_changed' });
+    }
+
+    /**
+     * Somebody already in the group putting a name right (design §5). No
+     * membership is being granted and no keyring goes with it: they are a
+     * member either way, and what moves is only whose entries these are.
+     */
+    if (kind === 'claim') {
+      if (!request.claimMemberId) return reply.code(404).send({ error: 'no_pending_request' });
+      // Left between asking and being answered. Taking a name over would put
+      // them back in a group they walked out of, so the ask lapses.
+      if (!(await isMember(userId, groupId))) return reply.code(409).send({ error: 'not_a_member' });
+      try {
+        await claimPlaceholder(userId, groupId, request.claimMemberId);
+      } catch (err) {
+        if (!isApiError(err)) throw err;
+        return reply.code(err.statusCode).send({ error: err.code });
+      }
+      await db.update(schema.joinRequests).set(decided).where(isThisRequest);
+      // Not to an admin who just approved their own ask: they are looking at
+      // the answer.
+      if (userId !== adminId) notifyUsers([userId], groupId, 'claim.approved', `/g/${groupId}?tab=members`);
+      // The claimer's key, so the approving device can hand over the entries
+      // the name brings (design §4.8). Nothing else travels: re-sharing the
+      // keyring here would quietly widen what a from-today member can read.
+      const claimer = await db
+        .select({ publicKey: schema.users.publicKey })
+        .from(schema.users)
+        .where(eq(schema.users.id, userId))
+        .limit(1);
+      return { status: 'approved' as const, publicKey: claimer[0]?.publicKey ?? null };
     }
 
     // claimPlaceholder rewrites the group's splits and manages its own
     // transaction, so it replaces the plain insert rather than joining it.
     if (request.claimMemberId) {
-      await claimPlaceholder(userId, groupId, request.claimMemberId);
-      await db
-        .update(schema.joinRequests)
-        .set(decided)
-        .where(and(eq(schema.joinRequests.groupId, groupId), eq(schema.joinRequests.userId, userId)));
+      // Two people can ask for the same name, and the second approval has to
+      // say so rather than becoming a 500. The join itself has not happened,
+      // so refusing leaves the request standing to be approved without a claim.
+      try {
+        await claimPlaceholder(userId, groupId, request.claimMemberId);
+      } catch (err) {
+        if (!isApiError(err)) throw err;
+        return reply.code(err.statusCode).send({ error: err.code });
+      }
+      await db.update(schema.joinRequests).set(decided).where(isThisRequest);
     } else {
       await db.transaction(async (tx) => {
         const version = await bumpGroupVersion(tx, groupId);
@@ -201,10 +274,7 @@ export async function membershipRoutes(app: FastifyInstance): Promise<void> {
           entityId: userId,
           payload: { via: 'invite', approvedBy: adminId },
         });
-        await tx
-          .update(schema.joinRequests)
-          .set(decided)
-          .where(and(eq(schema.joinRequests.groupId, groupId), eq(schema.joinRequests.userId, userId)));
+        await tx.update(schema.joinRequests).set(decided).where(isThisRequest);
       });
     }
 
@@ -286,6 +356,7 @@ export async function membershipRoutes(app: FastifyInstance): Promise<void> {
         and(
           eq(schema.joinRequests.groupId, groupId),
           eq(schema.joinRequests.userId, userId),
+          eq(schema.joinRequests.kind, 'join'),
           eq(schema.joinRequests.status, 'pending'),
         ),
       );
@@ -724,6 +795,99 @@ export async function membershipRoutes(app: FastifyInstance): Promise<void> {
   });
 
   /**
+   * "One of these names is me" — asked from inside the group, after the join.
+   *
+   * The invite page asks the same question, but only once and only in the
+   * minute somebody is following a link, which is the worst moment to ask it:
+   * the names on offer belong to a group they cannot see yet. So the mistakes
+   * are joining as somebody new when a name was already theirs, and picking a
+   * stranger's name in a list of strangers' names. Both were dead ends — the
+   * first with no way back at all, the second needing an admin to undo a claim
+   * that could then never be re-made.
+   *
+   * It is a request, not an action, because a takeover moves a stretch of the
+   * ledger from one name to another and everybody's balance moves with it. The
+   * same admin decides it, in the same queue, on the same evidence.
+   */
+  app.post('/api/groups/:groupId/claim-requests', { preHandler: app.requireUser }, async (req, reply) => {
+    const { groupId } = req.params as { groupId: string };
+    const userId = req.user!.id;
+    if (!(await isMember(userId, groupId))) return reply.code(404).send({ error: 'not_found' });
+
+    const parsed = claimRequestSchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'invalid_input' });
+    const target = parsed.data.claimMemberId;
+    // Aliasing a row to itself. Their own entries are already theirs.
+    if (target === userId) return reply.code(409).send({ error: 'already_you' });
+
+    // Checked here so a mistake is answered now rather than sitting in the
+    // queue until an admin discovers it. Checked *again* when the claim is
+    // applied, because between the two somebody else may have taken the name.
+    const claimable = await claimableMembers(groupId);
+    if (!claimable.some((c) => c.userId === target)) {
+      return reply.code(409).send({ error: 'not_claimable' });
+    }
+
+    const now = new Date();
+    await db
+      .insert(schema.joinRequests)
+      .values({
+        groupId,
+        userId,
+        kind: 'claim',
+        // No link behind this one: they are already in.
+        inviteTokenHash: null,
+        claimMemberId: target,
+        status: 'pending',
+        requestedAt: now,
+      })
+      // Changing their mind before anybody has answered is the same act as
+      // asking, so it overwrites rather than being refused — and a claim
+      // settled long ago does not stand in the way of asking about a second
+      // name, which somebody who typed two placeholders for themselves needs.
+      .onDuplicateKeyUpdate({
+        set: { claimMemberId: target, status: 'pending', requestedAt: now, decidedBy: null, decidedAt: null },
+      });
+
+    const [admins, actor] = await Promise.all([
+      activeAdminIds(groupId),
+      db.select({ displayName: schema.users.displayName }).from(schema.users).where(eq(schema.users.id, userId)).limit(1),
+    ]);
+    notifyUsers(
+      admins.filter((a) => a !== userId),
+      groupId,
+      'claim.requested',
+      `/g/${groupId}?tab=members`,
+      actor[0]?.displayName ?? undefined,
+    );
+    return { status: 'pending' as const };
+  });
+
+  /**
+   * Take the ask back. Nothing has happened yet, so this is a delete rather
+   * than a decision — leaving a withdrawn row in the queue would put an admin
+   * in front of a question nobody is asking any more.
+   */
+  app.delete('/api/groups/:groupId/claim-requests', { preHandler: app.requireUser }, async (req, reply) => {
+    const { groupId } = req.params as { groupId: string };
+    const userId = req.user!.id;
+    if (!(await isMember(userId, groupId))) return reply.code(404).send({ error: 'not_found' });
+    // Only while undecided: an approval that landed a second ago is a fact
+    // about the ledger now, and undoing that is unclaim's job.
+    await db
+      .delete(schema.joinRequests)
+      .where(
+        and(
+          eq(schema.joinRequests.groupId, groupId),
+          eq(schema.joinRequests.userId, userId),
+          eq(schema.joinRequests.kind, 'claim'),
+          eq(schema.joinRequests.status, 'pending'),
+        ),
+      );
+    return { status: 'withdrawn' as const };
+  });
+
+  /**
    * Undo a claim. Admin-only, like every other membership decision, and the
    * only way back from picking the wrong name — which is otherwise permanent
    * and leaves that name unusable by the person it belonged to.
@@ -909,3 +1073,40 @@ export async function membershipRoutes(app: FastifyInstance): Promise<void> {
 
 /** Exported for tests that need the same admin set the routes use. */
 export { activeAdminIds };
+
+/**
+ * The caller's own undecided claim, or the one just turned down.
+ *
+ * A decline is kept rather than swallowed: the member is told, on the screen
+ * they asked from, and can pick again. Without it the ask simply vanishes and
+ * they are left waiting for an answer that already came.
+ */
+async function ownClaim(
+  groupId: string,
+  userId: string,
+): Promise<{ claimMemberId: string; status: 'pending' | 'rejected' } | null> {
+  const rows = await db
+    .select({
+      claimMemberId: schema.joinRequests.claimMemberId,
+      status: schema.joinRequests.status,
+      decidedAt: schema.joinRequests.decidedAt,
+    })
+    .from(schema.joinRequests)
+    .where(
+      and(
+        eq(schema.joinRequests.groupId, groupId),
+        eq(schema.joinRequests.userId, userId),
+        eq(schema.joinRequests.kind, 'claim'),
+      ),
+    )
+    .limit(1);
+  const row = rows[0];
+  if (!row?.claimMemberId) return null;
+  if (row.status === 'pending') return { claimMemberId: row.claimMemberId, status: 'pending' };
+  // Approved rows say nothing worth showing — the name is theirs, and the
+  // members list shows that. A stale decline eventually stops being news.
+  if (row.status === 'rejected' && row.decidedAt && row.decidedAt > DECLINE_WINDOW()) {
+    return { claimMemberId: row.claimMemberId, status: 'rejected' };
+  }
+  return null;
+}

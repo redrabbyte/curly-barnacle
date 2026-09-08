@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import type { ExpenseDto, PaymentDto } from '@spendapp/shared';
+import type { ExpenseDto, MemberDto, PaymentDto } from '@spendapp/shared';
 import { aliasResolver } from '@spendapp/shared';
-import { claimScope, entriesNaming, mergeEntries, nameLooksDifferent } from './claim';
+import { claimScope, claimableNames, entriesNaming, mergeEntries, nameLooksDifferent } from './claim';
 
 const expense = (keyEpoch: number, ...userIds: string[]): ExpenseDto =>
   ({
@@ -164,5 +164,52 @@ describe('whether a claimed name reads like somebody else', () => {
   it('stays quiet when either name is missing', () => {
     expect(nameLooksDifferent('', 'Bob')).toBe(false);
     expect(nameLooksDifferent('Charlie', '   ')).toBe(false);
+  });
+});
+
+const member = (userId: string, over: Partial<MemberDto> = {}): MemberDto =>
+  ({
+    groupId: 'g',
+    userId,
+    displayName: userId,
+    leftAt: null,
+    isPlaceholder: false,
+    role: 'member',
+    version: 1,
+    ...over,
+  }) as MemberDto;
+
+describe('which names a member could say are theirs', () => {
+  const me = member('me');
+
+  it('offers placeholders nobody has taken', () => {
+    const sam = member('sam', { isPlaceholder: true });
+    expect(claimableNames([me, sam], 'me')).toEqual([
+      { userId: 'sam', displayName: 'sam', kind: 'placeholder' },
+    ]);
+  });
+
+  it('offers a real account only once it has left', () => {
+    const here = member('ada');
+    const gone = member('bob', { leftAt: '2026-01-01T00:00:00.000Z' });
+    expect(claimableNames([me, here, gone], 'me').map((c) => c.userId)).toEqual(['bob']);
+    expect(claimableNames([me, here, gone], 'me')[0]!.kind).toBe('departed');
+  });
+
+  it('withholds a name somebody has already taken over', () => {
+    // Offering it again would point two people at one history.
+    const sam = member('sam', { isPlaceholder: true, leftAt: '2026-01-01T00:00:00.000Z', aliasOf: 'ada' });
+    expect(claimableNames([me, sam], 'me')).toEqual([]);
+  });
+
+  it('withholds a removed placeholder, which is an admin\'s to put back', () => {
+    const gone = member('sam', { isPlaceholder: true, leftAt: '2026-01-01T00:00:00.000Z' });
+    expect(claimableNames([me, gone], 'me')).toEqual([]);
+  });
+
+  it('never offers the reader themselves', () => {
+    // Their own entries are already theirs; claiming would alias a row to itself.
+    const departedMe = member('me', { leftAt: '2026-01-01T00:00:00.000Z' });
+    expect(claimableNames([departedMe], 'me')).toEqual([]);
   });
 });

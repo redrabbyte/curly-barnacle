@@ -3,7 +3,14 @@ import { useNavigate } from 'react-router-dom';
 import { aliasResolver, deriveSas, formatSas, fromBase64Url, type MemberDto } from '@spendapp/shared';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { api } from '../api';
-import { claimScope, entriesNaming, mergeEntries, nameLooksDifferent, type ClaimScope } from '../claim';
+import {
+  claimScope,
+  claimableNames,
+  entriesNaming,
+  mergeEntries,
+  nameLooksDifferent,
+  type ClaimScope,
+} from '../claim';
 import { strandedNames } from '../departed';
 import { grantEntries } from '../entryKeys';
 import { forgetGroupLocally, localDb } from '../db';
@@ -65,12 +72,20 @@ function RemoveButton({
 
 interface JoinRequest {
   userId: string;
+  /**
+   * Which question this row asks: to be let in, or — from somebody already in
+   * — that one of the group's names is them (design §5). The same admin
+   * decides both, so they share a queue; almost everything else about them
+   * differs, which is why the card reads the kind before anything else.
+   */
+  kind: 'join' | 'claim';
   displayName: string;
   claimMemberId: string | null;
   requestedAt: string;
   /** Both halves of the SAS (design §4.3); absent on accounts predating §4.1. */
   publicKey: string | null;
-  inviteTokenHash: string;
+  /** Null on a claim: it is asked from inside, with no link behind it. */
+  inviteTokenHash: string | null;
   /** Epochs they could open when they last left; absent unless they were here before. */
   heldEpochs?: number[] | null;
   /** This account has been in this group before, under the same id. */
@@ -81,6 +96,19 @@ interface JoinRequest {
   status: 'pending' | 'rejected';
   decidedAt: string | null;
 }
+
+/**
+ * The caller's own claim, as the queue reports it: still waiting, or turned
+ * down recently enough to be worth saying so.
+ */
+type OwnClaim = { claimMemberId: string; status: 'pending' | 'rejected' } | null;
+
+/**
+ * What is busy. A person can have two rows in this queue at once — how they
+ * got in, and a name they say is theirs — and they are also a row in the
+ * members list below, so the id alone would disable three unrelated buttons.
+ */
+const rowKey = (kind: string, userId: string): string => `${kind}:${userId}`;
 
 /**
  * The digits the admin reads out and the joiner confirms, derived from the
@@ -95,9 +123,10 @@ function SasDigits({ groupId, request }: { groupId: string; request: JoinRequest
   const [sas, setSas] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!request.publicKey) return;
+    if (!request.publicKey || !request.inviteTokenHash) return;
     let live = true;
-    void deriveSas(request.inviteTokenHash, fromBase64Url(request.publicKey), groupId).then((s) => {
+    const tokenHash = request.inviteTokenHash;
+    void deriveSas(tokenHash, fromBase64Url(request.publicKey), groupId).then((s) => {
       if (live) setSas(s);
     });
     return () => {
@@ -235,6 +264,11 @@ export function MembersTab({ members, groupId, meId }: { members: MemberDto[]; g
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [requests, setRequests] = useState<JoinRequest[]>([]);
+  /** This member's own standing claim, which is theirs to see whoever they are. */
+  const [myClaim, setMyClaim] = useState<OwnClaim>(null);
+  const [claimPick, setClaimPick] = useState<string>('');
+  const [claimError, setClaimError] = useState<string | null>(null);
+  const [claimOpen, setClaimOpen] = useState(false);
   // The queue carries recent declines alongside the pending asks, so the two
   // are split here rather than fetched twice.
   const pendingRequests = requests.filter((r) => r.status !== 'rejected');
@@ -282,6 +316,10 @@ export function MembersTab({ members, groupId, meId }: { members: MemberDto[]; g
     [members, ledger],
   );
   const nameOf = (id: string) => members.find((m) => m.userId === id)?.displayName ?? t('members.someone');
+  // Names this member could say are theirs. Read off the mirror rather than
+  // asked for: the same rule the server applies to an invite link, applied to
+  // the members list every device already holds.
+  const couldBeMe = useMemo(() => claimableNames(members, meId), [members, meId]);
   const users = active.filter((m) => !m.isPlaceholder);
   const placeholders = active.filter((m) => m.isPlaceholder);
   const meIsAdmin = active.some((m) => m.userId === meId && m.role === 'admin');
@@ -307,19 +345,31 @@ export function MembersTab({ members, groupId, meId }: { members: MemberDto[]; g
   }, [groupId, members]);
 
   // Join requests are not group entities, so they do not ride the sync mirror.
+  // Fetched by every member, not only admins: the queue is empty for the rest,
+  // but a claim of their own comes back with it, and they need it on any
+  // device rather than only the tab they asked from.
   const loadRequests = useCallback(async () => {
-    if (!meIsAdmin) return setRequests([]);
     try {
-      const res = await api<{ requests: JoinRequest[] }>(`/api/groups/${groupId}/join-requests`);
+      const res = await api<{ requests: JoinRequest[]; mine: OwnClaim }>(
+        `/api/groups/${groupId}/join-requests`,
+      );
       setRequests(res.requests);
+      setMyClaim(res.mine ?? null);
     } catch {
       /* offline: the queue is simply unavailable until the network returns */
     }
-  }, [groupId, meIsAdmin]);
+  }, [groupId]);
 
   useEffect(() => {
     void loadRequests();
   }, [loadRequests]);
+
+  // An ask of their own, or an answer to one, is worth opening the section
+  // for — once. Setting `open` from `myClaim` on every render instead would
+  // re-open it under somebody who has just folded it away.
+  useEffect(() => {
+    if (myClaim) setClaimOpen(true);
+  }, [myClaim]);
 
   /**
    * Keep the queue fresh while this tab is open. A join request is pushed to
@@ -333,7 +383,9 @@ export function MembersTab({ members, groupId, meId }: { members: MemberDto[]; g
    * else — this just gives the queue the same treatment.
    */
   useEffect(() => {
-    if (!meIsAdmin) return;
+    // Somebody waiting on their own claim is watching for exactly one answer,
+    // so they poll for as long as it is outstanding and then stop.
+    if (!meIsAdmin && myClaim?.status !== 'pending') return;
     const refresh = () => {
       if (!document.hidden) void loadRequests();
     };
@@ -349,18 +401,53 @@ export function MembersTab({ members, groupId, meId }: { members: MemberDto[]; g
       document.removeEventListener('visibilitychange', refresh);
       window.removeEventListener('app:navigate', refresh);
     };
-  }, [loadRequests, meIsAdmin]);
+  }, [loadRequests, meIsAdmin, myClaim?.status]);
 
-  async function decide(userId: string, decision: 'approve' | 'reject') {
-    const request = requests.find((r) => r.userId === userId);
-    setDeciding(userId);
+  async function decide(userId: string, decision: 'approve' | 'reject', kind: 'join' | 'claim' = 'join') {
+    const request = requests.find((r) => r.userId === userId && r.kind === kind);
+    setDeciding(rowKey(kind, userId));
     setError(null);
     setKeyHandoff(null);
     try {
       const res = await api<{ status: string; publicKey: string | null }>(
         `/api/groups/${groupId}/join-requests/${userId}`,
-        { method: 'POST', body: { decision } },
+        {
+          method: 'POST',
+          body: {
+            decision,
+            kind,
+            // What this screen said the request was for. A pending pick can
+            // still change — that is the point of it being pending — and the
+            // entries below are read off *this* name. Sending it back turns a
+            // request that moved underneath the admin into a refusal rather
+            // than an approval of something they never saw.
+            expectClaimMemberId: request?.claimMemberId ?? null,
+          },
+        },
       );
+
+      /**
+       * A name being put right, by somebody who is already here.
+       *
+       * No keyring travels: they are a member, with whatever history their own
+       * welcome gave them, and re-sharing the ring here would quietly widen
+       * that. What does travel is the entries the name brings — otherwise they
+       * are handed debts they cannot read, which is the bargain §4.8 exists to
+       * refuse.
+       */
+      if (kind === 'claim') {
+        if (decision === 'approve' && res.publicKey && request?.claimMemberId) {
+          try {
+            const owed = claimCarries(request.claimMemberId).grantable;
+            if (owed.length > 0) await grantEntries(groupId, userId, res.publicKey, owed);
+          } catch (err) {
+            setKeyHandoff(t('members.claimGrantFailed', { reason: (err as Error).message }));
+          }
+        }
+        await loadRequests();
+        if (decision === 'approve') await syncNow();
+        return;
+      }
       // A history-scoped invite (design §4.7). The cut has to be a key
       // boundary, so approving mints a fresh epoch wrapped to everyone
       // *including* them — and pointedly does not hand over the older ones.
@@ -506,6 +593,43 @@ export function MembersTab({ members, groupId, meId }: { members: MemberDto[]; g
     }
   }
 
+  /**
+   * Say that one of the group's names is you.
+   *
+   * A request rather than an act, for the same reason the invite page's is:
+   * taking a name over moves a stretch of the ledger, and everybody's balance
+   * moves with it. What has changed is only *when* it can be asked — the
+   * moment somebody follows a link is the worst possible one, because the
+   * names on offer belong to a group they cannot see yet.
+   */
+  async function askForName(claimMemberId: string) {
+    setBusy(true);
+    setClaimError(null);
+    try {
+      await api(`/api/groups/${groupId}/claim-requests`, { method: 'POST', body: { claimMemberId } });
+      await loadRequests();
+    } catch (err) {
+      setClaimError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  /** Take the ask back. Nothing has happened yet, so nothing is undone. */
+  async function withdrawClaim() {
+    setBusy(true);
+    setClaimError(null);
+    try {
+      await api(`/api/groups/${groupId}/claim-requests`, { method: 'DELETE' });
+      await loadRequests();
+      setClaimPick('');
+    } catch (err) {
+      setClaimError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function unclaim(userId: string) {
     setDeciding(userId);
     setError(null);
@@ -604,14 +728,17 @@ export function MembersTab({ members, groupId, meId }: { members: MemberDto[]; g
                 <span>{r.displayName}</span>
                 {r.claimMemberId && (
                   <span className="text-xs text-slate-400">
-                    {t('members.wantsToTakeOver', {
+                    {t(r.kind === 'claim' ? 'members.saysTheyAre' : 'members.wantsToTakeOver', {
                       name:
                         members.find((m) => m.userId === r.claimMemberId)?.displayName ??
                         t('members.aPlaceholder'),
                     })}
                   </span>
                 )}
-                <SasDigits groupId={groupId} request={r} />
+                {/* Digits authenticate somebody arriving. A member asking about
+                    a name arrived long ago, over this same queue, and there is
+                    no link behind the ask to derive them from. */}
+                {r.kind === 'join' && <SasDigits groupId={groupId} request={r} />}
                 {r.previouslyMember && (
                   <span className="text-xs text-slate-500 dark:text-slate-400">{t('members.wasHereBefore')}</span>
                 )}
@@ -636,23 +763,25 @@ export function MembersTab({ members, groupId, meId }: { members: MemberDto[]; g
               </span>
               <span className="flex shrink-0 gap-2">
                 <button
-                  disabled={deciding === r.userId}
+                  disabled={deciding === rowKey(r.kind, r.userId)}
                   onClick={() =>
-                    // No key means no keyring to hand over, so nothing to confirm.
-                    r.publicKey && confirmApprove !== r.userId
+                    // No key means no keyring to hand over, so nothing to
+                    // confirm — and a claim hands none over either, however
+                    // many keys the asker holds: they are already inside.
+                    r.publicKey && r.kind === 'join' && confirmApprove !== r.userId
                       ? setConfirmApprove(r.userId)
-                      : void decide(r.userId, 'approve')
+                      : void decide(r.userId, 'approve', r.kind)
                   }
                   className={`${smallButton} bg-teal-700 text-white`}
                 >
                   {confirmApprove === r.userId ? t('members.approveConfirm') : t('members.approve')}
                 </button>
                 <button
-                  disabled={deciding === r.userId}
+                  disabled={deciding === rowKey(r.kind, r.userId)}
                   onClick={() =>
                     confirmApprove === r.userId
                       ? setConfirmApprove(null)
-                      : void decide(r.userId, 'reject')
+                      : void decide(r.userId, 'reject', r.kind)
                   }
                   className={`${smallButton} border border-slate-300 text-slate-600 dark:border-slate-600 dark:text-slate-300`}
                 >
@@ -681,16 +810,113 @@ export function MembersTab({ members, groupId, meId }: { members: MemberDto[]; g
                 </span>
               </span>
               <button
-                disabled={deciding === r.userId}
-                onClick={() => void decide(r.userId, 'approve')}
+                disabled={deciding === rowKey(r.kind, r.userId)}
+                onClick={() => void decide(r.userId, 'approve', r.kind)}
                 className={`${smallButton} shrink-0 border border-teal-700 text-teal-800 dark:border-teal-500 dark:text-teal-400`}
               >
-                {t('members.letThemIn')}
+                {r.kind === 'claim' ? t('members.letThemHaveIt') : t('members.letThemIn')}
               </button>
             </div>
           ))}
           <p className="text-xs text-slate-400">{t('members.declinedNote')}</p>
         </section>
+      )}
+
+      {/**
+       * Putting a name right from inside the group.
+       *
+       * Every takeover used to have to be decided in the ten seconds after
+       * following an invite link, from a list of names belonging to a group
+       * the reader could not see yet — and the two ways of getting it wrong,
+       * joining as somebody new when a name was already yours and picking a
+       * stranger's, were both dead ends. This is the same question, asked
+       * where the answer is knowable: the ledger is on screen, and the names
+       * in it have entries next to them.
+       */}
+      {(couldBeMe.length > 0 || myClaim) && (
+        <details
+          // Folded away by default: in a group full of placeholders somebody
+          // typed, this is a question with an answer already, and it should not
+          // sit open under everyone's members list forever. It opens itself
+          // when there is something outstanding (see the effect above).
+          open={claimOpen}
+          onToggle={(e) => setClaimOpen(e.currentTarget.open)}
+          className="rounded border border-slate-200 px-3 py-2 dark:border-slate-700"
+        >
+          <summary className="cursor-pointer text-sm font-medium text-slate-500 dark:text-slate-400">
+            {t('members.isThisYou')}
+          </summary>
+          {/* Only once it is open. A closed <details> still renders its
+              children, and a list of every name in the group is one every
+              other control here would then have to be distinguished from. */}
+          {claimOpen && (
+          <div className="mt-2 flex flex-col gap-2">
+            {myClaim?.status === 'pending' ? (
+              <div className={row}>
+                <span className="flex flex-col">
+                  <span className="text-sm">
+                    {t('members.claimWaiting', { name: nameOf(myClaim.claimMemberId) })}
+                  </span>
+                  <span className="text-xs text-slate-400">{t('members.claimWaitingNote')}</span>
+                </span>
+                <button
+                  disabled={busy}
+                  onClick={() => void withdrawClaim()}
+                  className={`${smallButton} shrink-0 border border-slate-300 text-slate-600 dark:border-slate-600 dark:text-slate-300`}
+                >
+                  {t('members.claimWithdraw')}
+                </button>
+              </div>
+            ) : (
+              <>
+                {myClaim?.status === 'rejected' && (
+                  <p className="rounded bg-amber-50 p-2 text-sm text-amber-900 dark:bg-amber-950 dark:text-amber-100">
+                    {t('members.claimDeclined', { name: nameOf(myClaim.claimMemberId) })}
+                  </p>
+                )}
+                <div className="flex flex-wrap items-center gap-2">
+                  {/* Labelled by attribute rather than a hidden <label>: the
+                      summary above already says these words, and two copies of
+                      them is one for a screen reader to read out twice. */}
+                  <select
+                    id="own-claim"
+                    aria-label={t('members.isThisYou')}
+                    value={claimPick}
+                    onChange={(e) => setClaimPick(e.target.value)}
+                    className="grow rounded border border-slate-300 px-2 py-1.5 text-sm dark:border-slate-600 dark:bg-slate-800"
+                  >
+                    <option value="">{t('members.claimNobody')}</option>
+                    {couldBeMe.map((c) => (
+                      <option key={c.userId} value={c.userId}>
+                        {c.kind === 'departed' ? t('members.claimLeft', { name: c.displayName }) : c.displayName}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    disabled={busy || !claimPick}
+                    onClick={() => void askForName(claimPick)}
+                    className="rounded bg-teal-700 px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50"
+                  >
+                    {t('members.claimAsk')}
+                  </button>
+                </div>
+                {/* What the ask is actually about, counted on this device
+                    because only this device can read a split. */}
+                {claimPick && claimCarries(claimPick).naming > 0 && (
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    {t('members.claimBringsMine', { count: claimCarries(claimPick).naming })}
+                  </p>
+                )}
+              </>
+            )}
+            {/* Its own line rather than the shared one at the foot of the
+                members list: a refusal has to appear next to the button that
+                caused it, not a screen below it. */}
+            {claimError && <p className="text-sm text-red-600 dark:text-red-400">{claimError}</p>}
+            <p className="text-xs text-slate-400">{t('members.isThisYouNote')}</p>
+          </div>
+          )}
+        </details>
       )}
 
       {meIsAdmin && (

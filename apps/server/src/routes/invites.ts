@@ -77,6 +77,11 @@ export async function inviteRoutes(app: FastifyInstance): Promise<void> {
       // "be yourself" and "start over", which is how somebody ends up listed
       // twice in a group they have always been in.
       const mine = req.user ? claimable.find((c) => c.userId === req.user!.id) : undefined;
+      // What they picked last time, so coming back to the link shows the
+      // choice as it stands rather than as it looked before they made it. Only
+      // for a request of their own that nobody has decided yet: any other
+      // state has no pick left to change.
+      const picked = req.user && state === 'pending' ? await pendingClaim(invite.groupId, req.user.id) : null;
       return {
         inviterName: invite.inviterName,
         // Told up front, not discovered afterwards: a ledger you can only see
@@ -89,6 +94,7 @@ export async function inviteRoutes(app: FastifyInstance): Promise<void> {
         // page has no use for it.
         groupId: state === 'joined' || state === 'pending' ? invite.groupId : null,
         claimable: claimable.filter((c) => c.userId !== req.user?.id),
+        claimMemberId: picked,
         wasMember: mine ? { userId: mine.userId, displayName: mine.displayName } : null,
       };
     },
@@ -113,14 +119,56 @@ export async function inviteRoutes(app: FastifyInstance): Promise<void> {
     // Bounded by the schema now rather than taken raw off the body: it reaches
     // a char(36) column, and an oversized string used to become a 500.
     const claim = parsed.data.claimMemberId ?? null;
+    /**
+     * Whether the caller said anything about a name at all. `undefined` is a
+     * client that is not talking about the claim — an older one re-following
+     * the link, say — and its silence must not clear a pick somebody made on
+     * purpose. `null` is a person choosing to join as themselves after all.
+     */
+    const saidSomething = parsed.data.claimMemberId !== undefined;
 
     const existing = await db
       .select({ status: schema.joinRequests.status })
       .from(schema.joinRequests)
-      .where(and(eq(schema.joinRequests.groupId, invite.groupId), eq(schema.joinRequests.userId, userId)))
+      .where(
+        and(
+          eq(schema.joinRequests.groupId, invite.groupId),
+          eq(schema.joinRequests.userId, userId),
+          eq(schema.joinRequests.kind, 'join'),
+        ),
+      )
       .limit(1);
     const status = existing[0]?.status;
-    if (status === 'pending') return { status: 'pending' as const, groupId: invite.groupId };
+    /**
+     * Already asked. The request stands either way — asking twice must not
+     * spend a second use of the link, and did not before — but the *name* on
+     * it is still open to correction until an admin decides.
+     *
+     * Which is the whole point: picking the wrong name from a list of
+     * strangers' names is the easiest mistake in this flow to make and, once
+     * approved, one only an admin can undo. While it is still a request it is
+     * nobody's history yet, so changing it costs nothing and needs no
+     * approval of its own.
+     */
+    if (status === 'pending') {
+      if (saidSomething) {
+        await db
+          .update(schema.joinRequests)
+          .set({ claimMemberId: claim })
+          .where(
+            and(
+              eq(schema.joinRequests.groupId, invite.groupId),
+              eq(schema.joinRequests.userId, userId),
+              eq(schema.joinRequests.kind, 'join'),
+              // Only while it is still undecided. An admin approving in the
+              // same second wins, and the claim they approved is the one that
+              // was in front of them.
+              eq(schema.joinRequests.status, 'pending'),
+            ),
+          );
+      }
+      return { status: 'pending' as const, groupId: invite.groupId };
+    }
     // A decline is final for this account; otherwise the same link would let
     // someone re-ask on a loop.
     if (status === 'rejected') return reply.code(403).send({ error: 'join_declined' });
@@ -148,6 +196,7 @@ export async function inviteRoutes(app: FastifyInstance): Promise<void> {
       .values({
         groupId: invite.groupId,
         userId,
+        kind: 'join',
         inviteTokenHash: hashToken(token),
         claimMemberId: claim,
         status: 'pending',
@@ -226,7 +275,15 @@ async function inviteState(
   const rows = await db
     .select({ status: schema.joinRequests.status })
     .from(schema.joinRequests)
-    .where(and(eq(schema.joinRequests.groupId, invite.groupId), eq(schema.joinRequests.userId, userId)))
+    // A claim asked from inside the group is a different question with a row
+    // of its own; it says nothing about what this link can do.
+    .where(
+      and(
+        eq(schema.joinRequests.groupId, invite.groupId),
+        eq(schema.joinRequests.userId, userId),
+        eq(schema.joinRequests.kind, 'join'),
+      ),
+    )
     .limit(1);
   const status = rows[0]?.status;
   if (status === 'pending') return 'pending';
@@ -235,4 +292,21 @@ async function inviteState(
   // way back is a fresh link — this one's use is gone — so it falls through to
   // the count, which says exactly that.
   return spent;
+}
+
+/** The name a standing join request has picked, if it has picked one. */
+async function pendingClaim(groupId: string, userId: string): Promise<string | null> {
+  const rows = await db
+    .select({ claimMemberId: schema.joinRequests.claimMemberId })
+    .from(schema.joinRequests)
+    .where(
+      and(
+        eq(schema.joinRequests.groupId, groupId),
+        eq(schema.joinRequests.userId, userId),
+        eq(schema.joinRequests.kind, 'join'),
+        eq(schema.joinRequests.status, 'pending'),
+      ),
+    )
+    .limit(1);
+  return rows[0]?.claimMemberId ?? null;
 }

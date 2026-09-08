@@ -34,6 +34,7 @@ const KEYS: Record<ApiErrorCode, MessageKey> = {
   already_you: 'error.already_you',
   not_claimable: 'error.not_claimable',
   already_claimed: 'error.already_claimed',
+  claim_changed: 'error.claim_changed',
   still_in_group: 'error.still_in_group',
   not_a_placeholder: 'error.not_a_placeholder',
   no_wraps_for_members: 'error.no_wraps_for_members',

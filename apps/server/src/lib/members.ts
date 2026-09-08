@@ -1,5 +1,4 @@
 import { and, eq, inArray, isNull } from 'drizzle-orm';
-import type { SplitMeta } from '@spendapp/shared';
 import { ApiError } from './api-error.js';
 import { db, schema } from '../db/index.js';
 import { bumpGroupVersion, logActivity } from './groups.js';
@@ -214,23 +213,6 @@ export async function unclaimMember(adminId: string, groupId: string, targetId: 
   });
 }
 
-/** Rewrite one member id to another inside a SplitMeta. */
-function remapSplitMeta(meta: SplitMeta, from: string, to: string): SplitMeta {
-  const swap = (u: string): string => (u === from ? to : u);
-  // Each arm is spelled out: a shared `entries` branch widens the union and
-  // loses the discriminant.
-  switch (meta.mode) {
-    case 'equal':
-      return { ...meta, userIds: meta.userIds.map(swap) };
-    case 'exact':
-      return { ...meta, entries: meta.entries.map((e) => ({ ...e, userId: swap(e.userId) })) };
-    case 'percent':
-      return { ...meta, entries: meta.entries.map((e) => ({ ...e, userId: swap(e.userId) })) };
-    case 'shares':
-      return { ...meta, entries: meta.entries.map((e) => ({ ...e, userId: swap(e.userId) })) };
-  }
-}
-
 /**
  * Take over another member's identity in this group: every reference to them
  * becomes the claimer, resolved through `alias_of` at read time (design §3.4).
@@ -297,25 +279,50 @@ export async function claimPlaceholder(userId: string, groupId: string, targetId
     const now = new Date();
     const version = await bumpGroupVersion(tx, groupId);
 
-    /**
-     * The claimer becomes a member in their own right.
-     *
-     * Resurrecting the row means everything not reset here carries over, and
-     * the role is on it: a former admin who left and came back arrived as an
-     * admin again, without anybody granting it — the group approved a member
-     * and got an administrator. Being let back in is not the same decision as
-     * being given the role, so it starts over and whoever is admin now can
-     * hand it back deliberately.
-     *
-     * heldEpochs goes for the same reason: it described what they could open
-     * when they left, the approval that is running has already used it, and a
-     * stale copy on a live membership is a claim about access that is no
-     * longer true.
-     */
-    await tx
-      .insert(schema.groupMembers)
-      .values({ groupId, userId, joinedAt: now, role: 'member', version })
-      .onDuplicateKeyUpdate({ set: { leftAt: null, role: 'member', heldEpochs: null, version } });
+    // Is the claimer already in the group, or arriving with this claim? The
+    // two cases want opposite things from the row below, so it is read rather
+    // than assumed.
+    const mineRows = await tx
+      .select({ leftAt: schema.groupMembers.leftAt })
+      .from(schema.groupMembers)
+      .where(and(eq(schema.groupMembers.groupId, groupId), eq(schema.groupMembers.userId, userId)))
+      .for('update');
+    const alreadyIn = mineRows[0] !== undefined && mineRows[0].leftAt === null;
+
+    if (alreadyIn) {
+      /**
+       * Somebody who is already here, putting a name right (design §5). Their
+       * membership is not what is being decided — only whose entries these
+       * are — so nothing on it moves. Resetting the role here would demote an
+       * admin for fixing their own mistake, and clearing heldEpochs would
+       * throw away the record of what they can open, which nothing in a claim
+       * has changed.
+       */
+      await tx
+        .update(schema.groupMembers)
+        .set({ version })
+        .where(and(eq(schema.groupMembers.groupId, groupId), eq(schema.groupMembers.userId, userId)));
+    } else {
+      /**
+       * The claimer becomes a member in their own right.
+       *
+       * Resurrecting the row means everything not reset here carries over, and
+       * the role is on it: a former admin who left and came back arrived as an
+       * admin again, without anybody granting it — the group approved a member
+       * and got an administrator. Being let back in is not the same decision as
+       * being given the role, so it starts over and whoever is admin now can
+       * hand it back deliberately.
+       *
+       * heldEpochs goes for the same reason: it described what they could open
+       * when they left, the approval that is running has already used it, and a
+       * stale copy on a live membership is a claim about access that is no
+       * longer true.
+       */
+      await tx
+        .insert(schema.groupMembers)
+        .values({ groupId, userId, joinedAt: now, role: 'member', version })
+        .onDuplicateKeyUpdate({ set: { leftAt: null, role: 'member', heldEpochs: null, version } });
+    }
 
     // ...and the old identity retires, pointing at them. Every existing split,
     // payment and activity row keeps referencing the old id; readers follow the
@@ -324,5 +331,19 @@ export async function claimPlaceholder(userId: string, groupId: string, targetId
       .update(schema.groupMembers)
       .set({ leftAt: now, aliasOf: userId, version })
       .where(and(eq(schema.groupMembers.groupId, groupId), eq(schema.groupMembers.userId, targetId)));
+
+    // Said out loud in the feed. A takeover moves a stretch of the ledger from
+    // one name to another, and until now the only trace was the name quietly
+    // leaving the members list — which is not something anybody can check
+    // afterwards, least of all the people whose balances moved with it.
+    await logActivity(tx, {
+      groupId,
+      version,
+      actorId: userId,
+      type: 'member.claimed',
+      entityType: 'member',
+      entityId: targetId,
+      payload: { displayName: ghost.displayName },
+    });
   });
 }

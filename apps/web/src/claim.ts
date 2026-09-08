@@ -1,4 +1,4 @@
-import type { ExpenseDto, PaymentDto } from '@spendapp/shared';
+import type { ExpenseDto, MemberDto, PaymentDto } from '@spendapp/shared';
 
 /**
  * What taking over a name involves, worked out on the approving member's
@@ -115,4 +115,41 @@ export function nameLooksDifferent(claimed: string, requester: string): boolean 
   // One containing the other covers "Sam" against "Sam Green", which is the
   // common honest case and not worth a warning.
   return !a.includes(b) && !b.includes(a);
+}
+
+/** A name somebody in the group could say is theirs. */
+export interface ClaimableName {
+  userId: string;
+  displayName: string;
+  /** 'placeholder': never had an account. 'departed': a real member who left. */
+  kind: 'placeholder' | 'departed';
+}
+
+/**
+ * Which names a member could still take over, read off the mirror.
+ *
+ * The same rule the server applies when an invite link asks the question
+ * (`claimableMembers`), applied to the copy of the members list every device
+ * already holds — so the question can also be asked from *inside* the group,
+ * with no round trip and while offline.
+ *
+ * Three things are excluded, each for its own reason:
+ *
+ *  - a name already taken over, because pointing two people at one history is
+ *    exactly what claiming is for preventing;
+ *  - an active account, because that is not recovery, it is somebody else;
+ *  - the reader themselves, whose entries are already theirs.
+ */
+export function claimableNames(members: ReadonlyArray<MemberDto>, meId: string): ClaimableName[] {
+  return members
+    .filter((m) => !m.aliasOf && m.userId !== meId)
+    // A placeholder is claimable while it stands; a real account only once it
+    // has left. A removed placeholder is not on offer — it is out of the
+    // ledger's present, and putting it back is an admin's call.
+    .filter((m) => (m.isPlaceholder ? m.leftAt === null : m.leftAt !== null))
+    .map((m) => ({
+      userId: m.userId,
+      displayName: m.displayName,
+      kind: m.isPlaceholder ? ('placeholder' as const) : ('departed' as const),
+    }));
 }

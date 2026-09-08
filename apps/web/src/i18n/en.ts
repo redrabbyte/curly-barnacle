@@ -439,6 +439,7 @@ export const en = {
   'activity.payment.deleted': 'deleted a payment',
   'activity.member.added': 'added {name}',
   'activity.member.claimed': 'took over {name}',
+  'activity.member.unclaimed': 'gave {name} back',
   'activity.member.restored': 'put {name} back',
   'activity.import.created': {
     one: 'imported {count} entry from {source}',
@@ -547,12 +548,16 @@ export const en = {
   'members.checkByVoice': 'Check by voice:',
   'members.waiting': 'Waiting for approval ({count})',
   'members.wantsToTakeOver': 'wants to take over {name}',
+  'members.saysTheyAre': 'is already here, and says {name} is them',
   'members.aPlaceholder': 'a placeholder',
   'members.wasHereBefore': 'This account has been in this group before.',
   'members.claimNameDiffers':
     'They are asking to take over {claimed}, but they signed up as {asker}. Only approve if you know those are the same person.',
-  'members.claimBringsEntries':
-    'Taking over {name} carries {count} entries. Approving lets them read those, so the balance they inherit is one they can check.',
+  'members.claimBringsEntries': {
+    one: 'Taking over {name} carries {count} entry. Approving lets them read it, so the balance they inherit is one they can check.',
+    other:
+      'Taking over {name} carries {count} entries. Approving lets them read those, so the balance they inherit is one they can check.',
+  },
   'members.approve': 'Approve',
   'members.approveAsk': 'Read the digits out first. Approving hands over the keys to everything this group has recorded.',
   'members.approveConfirm': 'The digits match',
@@ -563,6 +568,7 @@ export const en = {
   'members.declined': 'Declined ({count})',
   'members.declinedOn': 'declined {date}',
   'members.letThemIn': 'Let them in',
+  'members.letThemHaveIt': 'Let them have it',
   'members.declinedNote':
     'They cannot ask again themselves, so this is the only way back in for them. Declines disappear from here after 30 days.',
   'members.addInPerson': 'Add someone in person',
@@ -583,6 +589,23 @@ export const en = {
   'members.notSignedUp': 'Not signed up yet',
   'members.noPlaceholders': 'Nobody yet. Add people here to split expenses with them before they have an account.',
   'members.unclaimed': 'unclaimed',
+  'members.isThisYou': 'Is one of these names you?',
+  'members.isThisYouNote':
+    'Everything recorded against a name comes to you when you take it over, and everybody’s balance moves with it — so an admin approves it, the same as any other join. Names marked “left this group” belonged to a real account: take one over only if it was yours and you cannot get back into it.',
+  'members.claimNobody': 'None of these is me',
+  'members.claimLeft': '{name} — left this group',
+  'members.claimAsk': 'That one is me',
+  // The same count as the admin's line, said the other way round: this reader
+  // is the one the entries would move to.
+  'members.claimBringsMine': {
+    one: 'That name is in {count} entry, and everything recorded against it would become yours.',
+    other: 'That name is in {count} entries, and everything recorded against them would become yours.',
+  },
+  'members.claimWaiting': 'You have asked to take over {name}.',
+  'members.claimWaitingNote': 'An admin has to approve it. Nothing has moved yet.',
+  'members.claimWithdraw': 'Take it back',
+  'members.claimDeclined':
+    'An admin turned down your ask to take over {name}. Ask again only if it was a misunderstanding — otherwise leave the name where it is.',
   'members.namePlaceholder': 'Name',
   'members.add': 'Add',
   'members.inviteNote':
@@ -611,6 +634,8 @@ export const en = {
   'members.addedPartial':
     'Added — but you joined this group partway through, so they can see only the same part of its history that you can.',
   'members.shareFailed': 'Added, but sharing the group with them failed ({reason}) — they cannot see anything yet.',
+  'members.claimGrantFailed':
+    'The name is theirs now, but handing over the entries behind it failed ({reason}) — they can see what they owe and not what it is for.',
   'members.removedRotated': 'Removed, and the group key was rotated — they cannot read anything written from now on.',
   'members.removedRotateFailed':
     'Removed, but rotating the key failed ({reason}). They can still read new entries until an admin removes someone again or retries.',
@@ -625,7 +650,13 @@ export const en = {
   // Coming back to the same link. Everything below is about a link that has
   // already done its one job — for this account, or for somebody else's.
   'invitePage.requestWaiting':
-    'You have already asked to join this group, and an admin still has to approve it. Following the link again does not ask a second time, and does not change the name you picked.',
+    'You have already asked to join this group, and an admin still has to approve it. Following the link again does not ask a second time — but until they decide, you can still change who you are joining as.',
+  'invitePage.askedAs': 'You asked to join as {name}.',
+  'invitePage.askedAsNew': 'You asked to join as someone new.',
+  'invitePage.someone': 'somebody',
+  'invitePage.changePick': 'Change this',
+  'invitePage.changeNote':
+    'Nothing has been taken over yet — a name only changes hands when an admin approves the request. Changing it here does not ask a second time.',
   'invitePage.alreadyMember': 'You are already in this group. Opening it…',
   'invitePage.spent':
     'Somebody else has already used this invite link. A link works once, so ask whoever runs the group to send you a new one.',
@@ -713,6 +744,8 @@ export const en = {
   'push.member.removed': '{actor} removed a member',
   'push.join.requested': '{actor} asked to join',
   'push.join.approved': 'Your request to join was approved',
+  'push.claim.requested': '{actor} says one of the names here is them',
+  'push.claim.approved': 'The name you asked for is yours now',
   'push.you.removed': 'You were removed from {group}',
   'push.you.promoted': 'You are now an admin',
   'push.you.promoted.lastAdminLeft': 'You are now an admin — the last one left the group',
@@ -747,6 +780,7 @@ export const en = {
   'error.already_you': 'That is already you.',
   'error.not_claimable': 'That name cannot be taken over.',
   'error.already_claimed': 'Somebody has already taken that name over.',
+  'error.claim_changed': 'They changed which name they are asking for. Have another look before you decide.',
   'error.still_in_group': 'That person is still in this group.',
   'error.not_a_placeholder': 'That is a real account, not a name somebody typed.',
   'error.no_wraps_for_members': 'Nobody could be given access — try again.',

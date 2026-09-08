@@ -19,6 +19,11 @@ export const NOTIFICATION_KINDS = [
   'member.removed',
   'join.requested',
   'join.approved',
+  // Somebody already in the group saying one of its names is them (design §5).
+  // Distinct from `join.requested`: they are a member either way, and what an
+  // admin is being asked to weigh is a stretch of the ledger changing hands.
+  'claim.requested',
+  'claim.approved',
   'you.removed',
   'you.promoted',
   'you.promoted.lastAdminLeft',

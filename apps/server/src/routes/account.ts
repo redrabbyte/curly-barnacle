@@ -68,6 +68,10 @@ export async function accountRoutes(app: FastifyInstance): Promise<void> {
       db
         .select({
           groupId: schema.joinRequests.groupId,
+          // Asking to join, or asking to take a name over: two rows can exist
+          // per group now, and an export that did not say which was which
+          // would show the same person asking twice for no stated reason.
+          kind: schema.joinRequests.kind,
           status: schema.joinRequests.status,
           requestedAt: schema.joinRequests.requestedAt,
           decidedAt: schema.joinRequests.decidedAt,
