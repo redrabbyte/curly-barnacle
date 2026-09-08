@@ -298,9 +298,10 @@ export const invites = mysqlTable('invites', {
   revokedAt: ts('revoked_at'),
   /**
    * Default 1: a link admits one person and is then spent (design §4.4).
-   * Counted on *request*, not approval — otherwise a link a hundred strangers
-   * followed would still look unused, and the admin would face a hundred
-   * pending rows from one leak.
+   * The inviter can raise it, to nine at most and never to unlimited: uses
+   * are counted on *request*, not approval — otherwise a link a hundred
+   * strangers followed would still look unused, and the admin would face a
+   * hundred pending rows from one leak. The cap bounds what one leak costs.
    */
   maxUses: int('max_uses').notNull().default(1),
   useCount: int('use_count').notNull().default(0),
@@ -311,6 +312,14 @@ export const invites = mysqlTable('invites', {
    * the cut has to be a key boundary, there is no other way to make it one.
    */
   shareHistory: boolean('share_history').notNull().default(true),
+  /**
+   * A name in the group this link was made for, or null for a link that asks
+   * the follower who they are. Set by the inviter, who can see the ledger and
+   * knows which entries are whose; the follower is preselected as it and can
+   * still change their mind. Only ever on a single-use link: a name changes
+   * hands once, so a link admitting several people could not carry one.
+   */
+  claimMemberId: id('claim_member_id'),
 });
 
 export const expenses = mysqlTable(

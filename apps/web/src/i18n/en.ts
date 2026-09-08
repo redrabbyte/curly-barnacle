@@ -201,6 +201,7 @@ export const en = {
   'join.codeLabel': 'Your join code',
 
   'invite.share': 'Share this link (valid 14 days):',
+  'invite.shareMany': 'Share this link (admits {count} people, valid 14 days):',
   'invite.copy': 'Copy link',
   'invite.shareAction': 'Share link',
   'invite.copied': 'Copied',
@@ -382,6 +383,14 @@ export const en = {
     'Nothing recorded so far will be readable to them — not the amounts, not who owed whom. Their own balance stays exact, but they see a partial picture of everyone else’s, and they cannot pass the earlier history on to anyone.',
   'group.inviteScopedWarning':
     'This link shares nothing from before it is accepted, and accepting it rotates the group key.',
+  'group.inviteFor': 'This link is for',
+  'group.inviteForNobody': 'Whoever follows it — they pick their own name',
+  'group.inviteForNote':
+    'Made for a name, the link opens with that name already selected, so they take over the entries recorded against it. They can still change it, and you approve the takeover as usual.',
+  'group.inviteUses': 'Admits',
+  'group.inviteUsesPeople': { one: 'person', other: 'people' },
+  'group.inviteUsesOne': 'A link made for a name admits one person: a name can only change hands once.',
+  'group.inviteMadeFor': 'Made for {name}. They open the link with that name already selected, and it works once.',
   'group.tab.expenses': 'Expenses',
   'group.tab.balances': 'Balances',
   'group.tab.charts': 'Charts',
@@ -609,7 +618,7 @@ export const en = {
   'members.namePlaceholder': 'Name',
   'members.add': 'Add',
   'members.inviteNote':
-    'When they sign up, send them an invite link — they can pick their name and take over the entries already recorded against it.',
+    'When they sign up, send them an invite link made for their name — they take over the entries already recorded against it. A link made for nobody in particular lets them pick when they open it.',
   'members.leaveTitle': 'Leave this group',
   'members.leaveLast':
     'You are the last member. Leaving deletes the group and everything in it — expenses, payments and receipts — from this device and from the server. This cannot be undone.',
@@ -662,6 +671,16 @@ export const en = {
     'Somebody else has already used this invite link. A link works once, so ask whoever runs the group to send you a new one.',
   'invitePage.spentSignedOut':
     'This invite link has already been used. If that was you, log in and this page will show how far your request got. If it was not, ask whoever runs the group for a new link — each one works once.',
+  // A link made for several people: "somebody else" is the wrong sentence,
+  // because there were several somebodies and that was the plan.
+  'invitePage.spentMany':
+    'This invite link has admitted as many people as it was made for. Ask whoever runs the group to send you a new one.',
+  'invitePage.spentManySignedOut':
+    'This invite link has admitted as many people as it was made for. If you were one of them, log in and this page will show how far your request got. If not, ask whoever runs the group for a new link.',
+  'invitePage.madeFor':
+    '{inviter} made this link for {name}. If that is you, leave it selected below — the entries already recorded under that name become yours once an admin approves. If it is not, change it.',
+  'invitePage.suggestionGone':
+    'This link was made for a name somebody else has since taken over. Pick another name below if one is yours, or join as someone new.',
   'invitePage.logInToCheck': 'Log in to check',
   'invitePage.declined':
     'Your request to join this group was declined, and this link cannot be used again. Ask whoever runs the group if that was not what they meant.',

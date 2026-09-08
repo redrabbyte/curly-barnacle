@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { and, eq, isNull, lt, sql } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
-import { inviteJoinSchema, inviteTokenSchema } from '@spendapp/shared';
+import { inviteCreateSchema, inviteJoinSchema, inviteTokenSchema } from '@spendapp/shared';
 import type { InviteState } from '@spendapp/shared';
 import { config } from '../config.js';
 import { db, schema } from '../db/index.js';
@@ -17,9 +17,25 @@ export async function inviteRoutes(app: FastifyInstance): Promise<void> {
     const { groupId } = req.params as { groupId: string };
     if (!(await isMember(req.user!.id, groupId))) return reply.code(404).send({ error: 'not_found' });
 
+    // An empty body is the oldest client's whole request, and still means what
+    // it meant: one person, everything shared, whoever they say they are.
+    const parsed = inviteCreateSchema.safeParse(req.body ?? {});
+    if (!parsed.success) return reply.code(400).send({ error: 'invalid_input' });
     // Withholding history is opt-in and never inferred: the default has to be
     // the one that leaves a new member able to read the ledger they are in.
-    const shareHistory = (req.body as { shareHistory?: unknown } | null)?.shareHistory !== false;
+    const shareHistory = parsed.data.shareHistory !== false;
+    const maxUses = parsed.data.maxUses ?? 1;
+    const claimMemberId = parsed.data.claimMemberId ?? null;
+    if (claimMemberId) {
+      // The same list the landing page offers, checked here so a link is never
+      // made for a name that cannot change hands — an active member's, one
+      // already taken over, or a stranger's id somebody typed into a request.
+      // Re-checked again at approval, which is where it actually happens.
+      const claimable = await claimableMembers(groupId);
+      if (!claimable.some((c) => c.userId === claimMemberId)) {
+        return reply.code(409).send({ error: 'not_claimable' });
+      }
+    }
     const token = randomBytes(16).toString('base64url'); // 128-bit capability
     const now = new Date();
     await db.insert(schema.invites).values({
@@ -28,14 +44,16 @@ export async function inviteRoutes(app: FastifyInstance): Promise<void> {
       createdBy: req.user!.id,
       createdAt: now,
       expiresAt: new Date(now.getTime() + config.inviteTtlDays * 86_400_000),
+      maxUses,
       shareHistory,
+      claimMemberId,
     });
     // The token goes in the *fragment*, not the path. A fragment is never put
     // on the wire — not in the request line, not in `Referer` — so the one
     // place a live capability used to be guaranteed to land, the access log of
     // whatever serves this app, no longer sees it at all. See the note on
     // `findValidInvite` below for the rest of the reasoning.
-    return { token, path: `/invite#${token}`, maxUses: 1, shareHistory };
+    return { token, path: `/invite#${token}`, maxUses, shareHistory, claimMemberId };
   });
 
   /**
@@ -82,12 +100,27 @@ export async function inviteRoutes(app: FastifyInstance): Promise<void> {
       // for a request of their own that nobody has decided yet: any other
       // state has no pick left to change.
       const picked = req.user && state === 'pending' ? await pendingClaim(invite.groupId, req.user.id) : null;
+      // The name this link was made for, if it still can be. Only while the
+      // link is open — a standing request has a pick of its own — and only to
+      // a signed-in caller, for the same reason the list is: a name is one of
+      // the things a forwarded link must not give away. The name can also
+      // have been taken by somebody else since the link was made, and the
+      // follower is told so rather than landing silently on "someone new".
+      // Their *own* departed row is not a suggestion either: rejoining
+      // restores it by itself, and `wasMember` says so.
+      const madeFor = req.user && state === 'open' && invite.claimMemberId ? invite.claimMemberId : null;
+      const suggested = madeFor ? (claimable.find((c) => c.userId === madeFor && c.userId !== req.user!.id) ?? null) : null;
       return {
         inviterName: invite.inviterName,
         // Told up front, not discovered afterwards: a ledger you can only see
         // half of is something to accept knowingly (design §4.7).
         shareHistory: invite.shareHistory,
+        // How many people it admits in all, so a spent link can say whether
+        // "somebody else used it" is even the right sentence.
+        maxUses: invite.maxUses,
         state,
+        suggestedClaim: suggested ? { userId: suggested.userId, displayName: suggested.displayName } : null,
+        suggestionGone: madeFor !== null && suggested === null && madeFor !== req.user!.id,
         // Only ever for a caller who is already inside or already asked — both
         // of whom the server has just confirmed. For anybody else the group id
         // is one more thing a forwarded link would give away, and the landing
@@ -118,7 +151,15 @@ export async function inviteRoutes(app: FastifyInstance): Promise<void> {
 
     // Bounded by the schema now rather than taken raw off the body: it reaches
     // a char(36) column, and an oversized string used to become a 500.
-    const claim = parsed.data.claimMemberId ?? null;
+    //
+    // A client that says nothing about a name gets the one the link was made
+    // for. Explicit `null` is a person who has looked at the suggestion and
+    // chosen to come in as somebody new after all, and that stands.
+    // Never their own departed row, though: rejoining restores it by itself,
+    // and a claim on it would be refused at approval as aliasing a row to
+    // itself. The lookup withholds it as a suggestion for the same reason.
+    const fromLink = invite.claimMemberId === userId ? null : invite.claimMemberId;
+    const claim = parsed.data.claimMemberId === undefined ? fromLink : parsed.data.claimMemberId;
     /**
      * Whether the caller said anything about a name at all. `undefined` is a
      * client that is not talking about the claim — an older one re-following
@@ -243,6 +284,7 @@ async function findValidInvite(token: string) {
       shareHistory: schema.invites.shareHistory,
       useCount: schema.invites.useCount,
       maxUses: schema.invites.maxUses,
+      claimMemberId: schema.invites.claimMemberId,
     })
     .from(schema.invites)
     .innerJoin(schema.groups, eq(schema.groups.id, schema.invites.groupId))

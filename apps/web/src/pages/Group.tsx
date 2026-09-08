@@ -1,8 +1,9 @@
 import { useMemo, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { aliasResolver, resolveSplits } from '@spendapp/shared';
+import { INVITE_MAX_USES, aliasResolver, resolveSplits } from '@spendapp/shared';
 import { api } from '../api';
+import { claimableNames } from '../claim';
 import { downloadCsv, toCsv } from '../export';
 import { useAuth } from '../auth';
 import { localDb } from '../db';
@@ -47,6 +48,11 @@ export function GroupPage() {
   const [inviteError, setInviteError] = useState<string | null>(null);
   const [inviteOpen, setInviteOpen] = useState(false);
   const [inviteScoped, setInviteScoped] = useState(false);
+  /** The name the link is made for; '' is "whoever follows it picks". */
+  const [inviteFor, setInviteFor] = useState('');
+  const [inviteUses, setInviteUses] = useState(1);
+  /** What the link that is on screen was made as, for the line under it. */
+  const [inviteMade, setInviteMade] = useState<{ maxUses: number; forName: string | null } | null>(null);
   const [importOpen, setImportOpen] = useState(false);
   const [query, setQuery] = useState('');
   const pending = usePendingExpenseIds();
@@ -106,15 +112,35 @@ export function GroupPage() {
     [liveExpenses, resolve],
   );
 
+  /**
+   * Names this link could be made for: the same set the landing page offers,
+   * read off the mirror the way the members tab reads it. The choice moves to
+   * this side because this is the side that can see the ledger — the person
+   * following the link cannot, and used to have to find themselves in a list
+   * of strangers' names in the ten seconds after tapping it.
+   */
+  const claimable = useMemo(() => (user ? claimableNames(allMembers ?? [], user.id) : []), [allMembers, user]);
+  const claimLabel = (c: { userId: string; displayName: string; kind: 'placeholder' | 'departed' }): string => {
+    const merged = (allMembers ?? []).filter((m) => m.aliasOf === c.userId).map((m) => m.displayName);
+    const base = merged.length > 0 ? t('invitePage.claimAlso', { name: c.displayName, names: merged.join(', ') }) : c.displayName;
+    return c.kind === 'departed' ? t('invitePage.claimLeft', { name: base }) : base;
+  };
+  // A name changes hands once, so a link made for one admits one person. The
+  // server refuses the pair; here the count simply follows the name.
+  const usesForLink = inviteFor === '' ? inviteUses : 1;
+
   async function createInvite(shareHistory: boolean) {
     if (!groupId) return;
     setInviteError(null);
     setInviteOpen(false);
     try {
-      const res = await api<{ token: string; path: string }>(`/api/groups/${groupId}/invites`, {
-        method: 'POST',
-        body: { shareHistory },
-      });
+      const res = await api<{ token: string; path: string; maxUses: number; claimMemberId: string | null }>(
+        `/api/groups/${groupId}/invites`,
+        {
+          method: 'POST',
+          body: { shareHistory, maxUses: usesForLink, claimMemberId: inviteFor === '' ? null : inviteFor },
+        },
+      );
       // The group's name goes into the fragment beside the token (design
       // §4.2). The server holds it sealed and cannot put it on the landing
       // page, and the stranger following the link holds no key — so the one
@@ -123,6 +149,10 @@ export function GroupPage() {
       const fragment = group && group.name !== '' ? inviteFragment(res.token, group.name) : res.token;
       setInviteUrl(`${location.origin}/invite#${fragment}`);
       setInviteScoped(!shareHistory);
+      setInviteMade({
+        maxUses: res.maxUses ?? 1,
+        forName: res.claimMemberId ? (claimable.find((c) => c.userId === res.claimMemberId)?.displayName ?? null) : null,
+      });
     } catch (err) {
       setInviteError((err as Error).message); // e.g. offline — invites need the server
     }
@@ -166,6 +196,52 @@ export function GroupPage() {
       )}
       {inviteOpen && (
         <div className="flex flex-col items-start gap-2 rounded border border-slate-200 p-3 dark:border-slate-700">
+          {/* Only when there is a name to make it for. A group with nothing
+              claimable has no question here, and an empty "for" control would
+              be one more thing to read past on the way to the link. */}
+          {claimable.length > 0 && (
+            <div className="flex w-full flex-col gap-1">
+              <label htmlFor="invite-for" className="text-sm font-medium text-slate-500 dark:text-slate-400">
+                {t('group.inviteFor')}
+              </label>
+              <select
+                id="invite-for"
+                value={inviteFor}
+                onChange={(e) => setInviteFor(e.target.value)}
+                className="rounded border border-slate-300 px-2 py-1.5 text-sm dark:border-slate-600 dark:bg-slate-800"
+              >
+                <option value="">{t('group.inviteForNobody')}</option>
+                {claimable.map((c) => (
+                  <option key={c.userId} value={c.userId}>
+                    {claimLabel(c)}
+                  </option>
+                ))}
+              </select>
+              <p className="text-xs text-slate-400">{t('group.inviteForNote')}</p>
+            </div>
+          )}
+          <div className="flex items-center gap-2">
+            <label htmlFor="invite-uses" className="text-sm font-medium text-slate-500 dark:text-slate-400">
+              {t('group.inviteUses')}
+            </label>
+            <select
+              id="invite-uses"
+              value={usesForLink}
+              disabled={inviteFor !== ''}
+              onChange={(e) => setInviteUses(Number(e.target.value))}
+              className="rounded border border-slate-300 px-2 py-1.5 text-sm disabled:opacity-50 dark:border-slate-600 dark:bg-slate-800"
+            >
+              {Array.from({ length: INVITE_MAX_USES }, (_, i) => i + 1).map((n) => (
+                <option key={n} value={n}>
+                  {n}
+                </option>
+              ))}
+            </select>
+            <span className="text-sm text-slate-500 dark:text-slate-400">
+              {t('group.inviteUsesPeople', { count: usesForLink })}
+            </span>
+          </div>
+          {inviteFor !== '' && <p className="text-xs text-slate-400">{t('group.inviteUsesOne')}</p>}
           <button
             onClick={() => void createInvite(true)}
             className="rounded bg-teal-700 px-3 py-1.5 text-sm font-medium text-white"
@@ -186,7 +262,10 @@ export function GroupPage() {
       )}
       {inviteUrl && (
         <div className="flex flex-col gap-1">
-          <InviteLink url={inviteUrl} />
+          <InviteLink url={inviteUrl} maxUses={inviteMade?.maxUses ?? 1} />
+          {inviteMade?.forName && (
+            <p className="text-xs text-slate-500 dark:text-slate-400">{t('group.inviteMadeFor', { name: inviteMade.forName })}</p>
+          )}
           {inviteScoped && (
             <p className="text-xs text-amber-700 dark:text-amber-500">{t('group.inviteScopedWarning')}</p>
           )}

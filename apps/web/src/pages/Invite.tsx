@@ -39,6 +39,16 @@ interface InviteInfo {
   state?: InviteState;
   /** Only for `joined` and `pending` — the two the server has confirmed. */
   groupId?: string | null;
+  /** How many people the link admits in all. Absent from an older server: one. */
+  maxUses?: number;
+  /**
+   * The name the inviter made this link for, still claimable. The initial
+   * pick, not the final one: the person following the link can see it is
+   * theirs, or see that it is not and change it.
+   */
+  suggestedClaim?: { userId: string; displayName: string } | null;
+  /** The link was made for a name somebody else has taken over since. */
+  suggestionGone?: boolean;
 }
 
 /** '' means "join as a new member" rather than taking over a placeholder. */
@@ -168,6 +178,11 @@ export function InvitePage() {
     // matters most on a shared browser, where the next person at this tab
     // would otherwise inherit whatever the link still carried.
     if (state !== 'open') clearInviteToken();
+    // The name the inviter chose, as the starting position. They could see
+    // the ledger when they picked it; the person here cannot, and a list of
+    // strangers' names is a worse place to start from than a name somebody
+    // who knows them has already pointed at. Still a select, still theirs.
+    if (state === 'open' && info.suggestedClaim) setClaim(info.suggestedClaim.userId);
     if (state === 'joined' && info.groupId) {
       const groupId = info.groupId;
       // Sync first, exactly as the join path does: arriving at a group the
@@ -303,7 +318,13 @@ export function InvitePage() {
                 anonymous visitor it cannot: they may be the joiner, logged out
                 or on a second device, and telling them a stranger took their
                 link would be both wrong and alarming. */}
-            {user ? t('invitePage.spent') : t('invitePage.spentSignedOut')}
+            {(info.maxUses ?? 1) > 1
+              ? user
+                ? t('invitePage.spentMany')
+                : t('invitePage.spentManySignedOut')
+              : user
+                ? t('invitePage.spent')
+                : t('invitePage.spentSignedOut')}
           </p>
           {user ? (
             <Link to="/" className="text-sm text-teal-700 underline dark:text-teal-300">
@@ -399,6 +420,19 @@ export function InvitePage() {
         </div>
       ) : user ? (
         <>
+          {info.suggestedClaim && (
+            <p className="rounded bg-teal-50 p-3 text-left text-sm text-teal-900 dark:bg-teal-950 dark:text-teal-100">
+              {t('invitePage.madeFor', { inviter: info.inviterName, name: info.suggestedClaim.displayName })}
+            </p>
+          )}
+          {/* Said rather than silently defaulted: landing on "someone new"
+              when the link was made for a name reads as if nothing was ever
+              chosen, and the person it was made for would join twice. */}
+          {info.suggestionGone && (
+            <p className="rounded bg-amber-50 p-3 text-left text-sm text-amber-900 dark:bg-amber-950 dark:text-amber-100">
+              {t('invitePage.suggestionGone')}
+            </p>
+          )}
           {info.claimable.length > 0 && (
             <div className="flex w-full flex-col gap-1 text-left">
               {/* Taking over a name is *added* to coming back as yourself —

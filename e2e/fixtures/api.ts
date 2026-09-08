@@ -7,6 +7,7 @@ import {
   deriveKek,
   deriveMasterKey,
   publicKeyFor,
+  inviteCreateSchema,
   inviteJoinSchema,
   inviteTokenSchema,
   publishKeyCommitmentsSchema,
@@ -169,6 +170,14 @@ export interface ApiState {
   publishedWraps: { groupId: string; userId: string; epoch: number; epk: string; iv: string; ct: string }[];
   /** What the last invite created asked for; false = history-scoped (§4.7). */
   lastInviteShareHistory: boolean | null;
+  /** The rest of what it asked for: how many people, and made for which name. */
+  lastInvite: { maxUses: number; claimMemberId: string | null } | null;
+  /**
+   * What the link the specs follow was made as. The mock has one link, so
+   * a spec seeds these to stand in for whatever the inviter chose.
+   */
+  inviteMaxUses: number;
+  inviteClaimMemberId: string | null;
   /**
    * The link the specs follow has already been used by somebody else. A link
    * is single-use, so this is what a third party following a forwarded one
@@ -234,6 +243,9 @@ export function createState(overrides: Partial<ApiState> = {}): ApiState {
     publishedWraps: [],
     lastInviteShareHistory: null,
     inviteSpent: false,
+    lastInvite: null,
+    inviteMaxUses: 1,
+    inviteClaimMemberId: null,
     soleKeyHolder: false,
     othersHold: new Map(),
     policy: { version: 'test-policy-1', text: 'We keep as little as we can.', installed: true },
@@ -1081,11 +1093,18 @@ export async function installApi(context: BrowserContext, state: ApiState): Prom
     }
 
     if (/^\/api\/groups\/[^/]+\/invites$/.test(path)) {
-      const shareHistory = (body() as { shareHistory?: boolean } | null)?.shareHistory !== false;
+      // The real schema, so a client asking for a name *and* several uses is
+      // refused here exactly as the server refuses it.
+      if (!check(inviteCreateSchema, body() ?? {})) return;
+      const asked = body() as { shareHistory?: boolean; maxUses?: number; claimMemberId?: string | null } | null;
+      const shareHistory = asked?.shareHistory !== false;
+      const maxUses = asked?.maxUses ?? 1;
+      const claimMemberId = asked?.claimMemberId ?? null;
       state.lastInviteShareHistory = shareHistory;
+      state.lastInvite = { maxUses, claimMemberId };
       // The token in the fragment, which is where a live capability belongs:
       // never on the wire, so never in a log (design §4.7).
-      return json(route, { token: INVITE_TOKEN, path: `/invite#${INVITE_TOKEN}`, shareHistory });
+      return json(route, { token: INVITE_TOKEN, path: `/invite#${INVITE_TOKEN}`, shareHistory, maxUses, claimMemberId });
     }
 
     /**
@@ -1145,7 +1164,8 @@ export async function installApi(context: BrowserContext, state: ApiState): Prom
           userId: ME.id,
           displayName: ME.displayName,
           kind: 'join',
-          claimMemberId: asked ?? null,
+          // Saying nothing gets the name the link was made for, as on the server.
+          claimMemberId: asked === undefined ? state.inviteClaimMemberId : asked,
           requestedAt: new Date().toISOString(),
           status: 'pending',
         });
@@ -1196,11 +1216,18 @@ export async function installApi(context: BrowserContext, state: ApiState): Prom
               ? 'pending'
               : spent;
       const live = inviteState === 'open' || inviteState === 'pending';
+      // The name the link was made for, while it is still on offer — and, if
+      // it is not any more, that it was made for one at all.
+      const madeFor = state.signedIn && inviteState === 'open' ? state.inviteClaimMemberId : null;
+      const suggested = madeFor ? (claimable.find((c) => c.userId === madeFor) ?? null) : null;
       // The server withholds this list from anonymous callers.
       // No group name: the server holds it sealed. The link carries it.
       return json(route, {
         inviterName: 'Someone',
         state: inviteState,
+        maxUses: state.inviteMaxUses,
+        suggestedClaim: suggested ? { userId: suggested.userId, displayName: suggested.displayName } : null,
+        suggestionGone: madeFor !== null && suggested === null && madeFor !== ME.id,
         groupId: inviteState === 'joined' || inviteState === 'pending' ? (groupId ?? null) : null,
         claimable: state.signedIn && live ? claimable : [],
         // What they picked last time, so coming back to the link shows the

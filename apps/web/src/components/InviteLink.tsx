@@ -61,7 +61,7 @@ function ShareIcon() {
   );
 }
 
-export function InviteLink({ url }: { url: string }) {
+export function InviteLink({ url, maxUses = 1 }: { url: string; maxUses?: number }) {
   const t = useT();
   const [note, setNote] = useState<string | null>(null);
   // Only mobile browsers implement the share sheet; elsewhere copy is all there is.
@@ -98,7 +98,7 @@ export function InviteLink({ url }: { url: string }) {
     <div className="rounded bg-teal-50 p-2 text-sm text-teal-900 dark:bg-teal-950 dark:text-teal-100">
       <div className="flex items-start gap-1">
         <span className="grow break-all">
-          {t('invite.share')} {url}
+          {maxUses > 1 ? t('invite.shareMany', { count: maxUses }) : t('invite.share')} {url}
         </span>
         <button onClick={() => void copy()} className={button} title={t('invite.copy')} aria-label={t('invite.copy')}>
           <CopyIcon />

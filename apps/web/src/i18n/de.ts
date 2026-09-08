@@ -193,6 +193,7 @@ export const de: Catalogue = {
   'join.codeLabel': 'Dein Beitrittscode',
 
   'invite.share': 'Diesen Link teilen (14 Tage gültig):',
+  'invite.shareMany': 'Diesen Link teilen (für {count} Personen, 14 Tage gültig):',
   'invite.copy': 'Link kopieren',
   'invite.shareAction': 'Link teilen',
   'invite.copied': 'Kopiert',
@@ -366,6 +367,14 @@ export const de: Catalogue = {
     'Nichts, was bisher eingetragen wurde, ist lesbar - weder die Beträge noch wer wem was schuldete. Der eigene Saldo bleibt exakt, aber von dem der anderen sieht die eingeladene Person nur einen Teil, und sie können den früheren Verlauf an niemanden weitergeben.',
   'group.inviteScopedWarning':
     'Dieser Link teilt nichts von vor seiner Annahme, und die Annahme wechselt den Gruppenschlüssel.',
+  'group.inviteFor': 'Dieser Link ist für',
+  'group.inviteForNobody': 'Wer ihn öffnet — die Person wählt ihren Namen selbst',
+  'group.inviteForNote':
+    'Für einen Namen erstellt, öffnet sich der Link mit diesem Namen schon ausgewählt, sodass die Person die darunter eingetragenen Ausgaben übernimmt. Sie kann ihn noch ändern, und du bestätigst die Übernahme wie gewohnt.',
+  'group.inviteUses': 'Gilt für',
+  'group.inviteUsesPeople': { one: 'Person', other: 'Personen' },
+  'group.inviteUsesOne': 'Ein Link für einen Namen gilt für eine Person: Ein Name kann nur einmal übernommen werden.',
+  'group.inviteMadeFor': 'Für {name} erstellt. Beim Öffnen ist dieser Name schon ausgewählt, und der Link gilt einmal.',
   'group.tab.expenses': 'Ausgaben',
   'group.tab.balances': 'Salden',
   'group.tab.charts': 'Diagramme',
@@ -585,7 +594,7 @@ export const de: Catalogue = {
   'members.namePlaceholder': 'Name',
   'members.add': 'Hinzufügen',
   'members.inviteNote':
-    'Wenn sie sich registrieren, schick ihnen einen Einladungslink — sie können ihren Namen wählen und die Einträge übernehmen, die schon darunter stehen.',
+    'Wenn sie sich registrieren, schick ihnen einen Einladungslink für ihren Namen — sie übernehmen die Einträge, die schon darunter stehen. Ein Link für niemand Bestimmtes lässt sie beim Öffnen selbst wählen.',
   'members.leaveTitle': 'Gruppe verlassen',
   'members.leaveLast':
     'Du bist das letzte Mitglied. Wenn du gehst, werden die Gruppe und alles darin — Ausgaben, Zahlungen und Belege — von diesem Gerät und vom Server gelöscht. Das lässt sich nicht rückgängig machen.',
@@ -638,6 +647,14 @@ export const de: Catalogue = {
     'Diesen Einladungslink hat schon jemand anderes benutzt. Ein Link gilt nur einmal — bitte die Gruppe um einen neuen.',
   'invitePage.spentSignedOut':
     'Dieser Einladungslink wurde schon benutzt. Falls du das warst: Melde dich an, dann zeigt diese Seite, wie weit deine Anfrage ist. Falls nicht, bitte die Gruppe um einen neuen Link — jeder gilt nur einmal.',
+  'invitePage.spentMany':
+    'Dieser Einladungslink wurde schon von so vielen Personen benutzt, wie er gedacht war. Bitte die Gruppe um einen neuen.',
+  'invitePage.spentManySignedOut':
+    'Dieser Einladungslink wurde schon von so vielen Personen benutzt, wie er gedacht war. Falls du dabei warst: Melde dich an, dann zeigt diese Seite, wie weit deine Anfrage ist. Falls nicht, bitte die Gruppe um einen neuen Link.',
+  'invitePage.madeFor':
+    '{inviter} hat diesen Link für {name} erstellt. Falls das du bist, lass den Namen unten ausgewählt — die schon darunter eingetragenen Ausgaben werden deine, sobald ein Admin zustimmt. Falls nicht, ändere ihn.',
+  'invitePage.suggestionGone':
+    'Dieser Link wurde für einen Namen erstellt, den inzwischen jemand anderes übernommen hat. Wähle unten einen anderen, falls einer deiner ist, oder tritt als jemand Neues bei.',
   'invitePage.logInToCheck': 'Zum Nachsehen anmelden',
   'invitePage.declined':
     'Deine Anfrage, dieser Gruppe beizutreten, wurde abgelehnt, und dieser Link lässt sich nicht noch einmal benutzen. Frag bei der Gruppe nach, falls das ein Versehen war.',

@@ -189,6 +189,33 @@ const inviteToken = z
 
 export const inviteTokenSchema = z.object({ token: inviteToken });
 
+/** The most people one link may admit. Small on purpose (design §4.4). */
+export const INVITE_MAX_USES = 9;
+
+/**
+ * Making a link. Everything here is a choice the inviter makes up front, so a
+ * link says what it is for before anybody follows it:
+ *
+ * - `maxUses` — how many people it admits before it is spent. One by default,
+ *   nine at most, never unlimited: uses are counted on request, and a link a
+ *   whole chat can follow forever is a queue an admin has to clear by hand.
+ * - `claimMemberId` — a name in the group this link is made *for*. The person
+ *   following it is preselected as that name rather than asked to find
+ *   themselves in a list of strangers. A name can only change hands once, so
+ *   a link with one is single-use, and the two are refused together rather
+ *   than quietly reconciled.
+ */
+export const inviteCreateSchema = z
+  .object({
+    shareHistory: z.boolean().optional(),
+    maxUses: z.number().int().min(1).max(INVITE_MAX_USES).optional(),
+    claimMemberId: uuid.nullable().optional(),
+  })
+  .refine((v) => !v.claimMemberId || (v.maxUses ?? 1) === 1, {
+    message: 'a link made for one name admits one person',
+    path: ['maxUses'],
+  });
+
 /**
  * Following an invite. `claimMemberId` reaches a `char(36)` column, so it is
  * bounded here — it used to be read straight off the body, where an oversized

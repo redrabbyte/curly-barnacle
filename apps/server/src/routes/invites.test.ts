@@ -407,6 +407,111 @@ d('invites', () => {
     });
   });
 
+  describe('a link made for a name, or for several people', () => {
+    const ROBIN = '44444444-4444-4444-8444-444444444444';
+    const create = async (payload: Record<string, unknown>) =>
+      app!.inject({ method: 'POST', url: `/api/groups/${GROUP}/invites`, headers: await asUser(ADMIN), payload });
+    const lookupAs = async (token: string, headers: Record<string, string>) =>
+      (
+        await app!.inject({
+          method: 'POST',
+          url: '/api/invites/lookup',
+          headers: { 'x-requested-with': 'spendapp', ...headers },
+          payload: { token },
+        })
+      ).json() as {
+        state: string;
+        maxUses: number;
+        suggestedClaim: { userId: string; displayName: string } | null;
+        suggestionGone: boolean;
+      };
+
+    it('admits as many people as it was made for, and no more', async () => {
+      const res = await create({ maxUses: 2 });
+      expect(res.statusCode).toBe(200);
+      const { token, maxUses } = res.json() as { token: string; maxUses: number };
+      expect(maxUses).toBe(2);
+      expect((await join(token, await asUser(JOINER))).statusCode).toBe(200);
+      expect((await join(token, await asUser(OTHER))).statusCode).toBe(200);
+      // A third stranger, with the two uses gone.
+      await db.insert(schema.users).values({
+        id: ROBIN,
+        username: 'robin',
+        passwordHash: '$argon2id$fake',
+        kdfSalt: 'c2FsdA',
+        kdfParams: { memoryKiB: 19456, iterations: 2, parallelism: 1 },
+        publicKey: 'cHVibGlj',
+        wrappedPrivateKey: '{"iv":"aXY","ct":"Y3Q"}',
+        displayName: 'Robin',
+        createdAt: new Date(),
+        privacyAcceptedAt: new Date(),
+        privacyVersion: '1',
+      });
+      expect((await join(token, await asUser(ROBIN))).statusCode).toBe(410);
+      expect((await lookupAs(token, {})).state).toBe('spent');
+      // So the landing page can say "as many as it was made for" rather than
+      // "somebody else used it".
+      expect((await lookupAs(token, {})).maxUses).toBe(2);
+    });
+
+    it('is capped: never unlimited, never more than nine', async () => {
+      expect((await create({ maxUses: 10 })).statusCode).toBe(400);
+      expect((await create({ maxUses: 0 })).statusCode).toBe(400);
+      expect((await create({ maxUses: 9 })).statusCode).toBe(200);
+    });
+
+    it('refuses a name together with several uses: a name changes hands once', async () => {
+      const robin = await placeholder(ROBIN, 'Robin');
+      expect((await create({ claimMemberId: robin, maxUses: 2 })).statusCode).toBe(400);
+      expect((await create({ claimMemberId: robin, maxUses: 1 })).statusCode).toBe(200);
+      expect((await create({ claimMemberId: robin })).statusCode).toBe(200);
+    });
+
+    it('refuses to be made for a name that cannot change hands', async () => {
+      // An active member's name is not on offer, and neither is an id that
+      // is in no group at all.
+      expect((await create({ claimMemberId: ADMIN })).statusCode).toBe(409);
+      expect((await create({ claimMemberId: ROBIN })).statusCode).toBe(409);
+    });
+
+    it('suggests the name to the follower, and uses it when a client says nothing', async () => {
+      const robin = await placeholder(ROBIN, 'Robin');
+      const { token } = (await create({ claimMemberId: robin })).json() as { token: string };
+      const joiner = await asUser(JOINER);
+      // To a stranger without a session the name is one more thing a
+      // forwarded link must not give away.
+      expect((await lookupAs(token, {})).suggestedClaim).toBeNull();
+      const seen = await lookupAs(token, joiner);
+      expect(seen.suggestedClaim).toEqual({ userId: robin, displayName: 'Robin' });
+      expect(seen.suggestionGone).toBe(false);
+
+      // An older client, re-following the link and not talking about names.
+      expect((await join(token, joiner)).statusCode).toBe(200);
+      expect((await requestFor(JOINER))?.claimMemberId).toBe(robin);
+    });
+
+    it('lets the follower decline the suggestion outright', async () => {
+      const robin = await placeholder(ROBIN, 'Robin');
+      const { token } = (await create({ claimMemberId: robin })).json() as { token: string };
+      // Explicit null: they looked, and it is not them.
+      expect((await join(token, await asUser(JOINER), null)).statusCode).toBe(200);
+      expect((await requestFor(JOINER))?.claimMemberId).toBeNull();
+    });
+
+    it('says when the name it was made for has been taken since', async () => {
+      const robin = await placeholder(ROBIN, 'Robin');
+      const { token } = (await create({ claimMemberId: robin })).json() as { token: string };
+      // Taken over by somebody else in the meantime.
+      await db
+        .update(schema.groupMembers)
+        .set({ leftAt: new Date(), aliasOf: ADMIN })
+        .where(and(eq(schema.groupMembers.groupId, GROUP), eq(schema.groupMembers.userId, robin)));
+      const seen = await lookupAs(token, await asUser(JOINER));
+      expect(seen.suggestedClaim).toBeNull();
+      expect(seen.suggestionGone).toBe(true);
+    });
+  });
+
   it('keeps the join request pointing at its invite', async () => {
     const token = await createInvite();
     await join(token, await asUser(JOINER));
