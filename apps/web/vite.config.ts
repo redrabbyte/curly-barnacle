@@ -6,6 +6,26 @@ import { DOCUMENT_META_TAGS } from './src/documentPolicy';
 import { linkPreviewTags } from './src/linkPreview';
 
 /**
+ * Insert a block of tags immediately before the document's closing head tag.
+ *
+ * Deliberately the *last* `</head>`, not the first. A `</head>` written
+ * anywhere else in the file — inside a comment, in a string, in prose — is
+ * still a literal match, and injecting at it drops the tags into the middle of
+ * whatever that construct is. That is not hypothetical: a comment mentioning
+ * the tag by name once landed the app's `<script>` inside the comment, and the
+ * built page rendered white because nothing ever loaded.
+ *
+ * This makes *our* injections safe from that. Vite's own asset injection is
+ * not — it takes the first match — which is why the checked-in `index.html`
+ * is separately pinned to exactly one closing head tag by documentPolicy.test.ts.
+ */
+const injectIntoHead = (html: string, tags: string): string => {
+  const at = html.lastIndexOf('</head>');
+  if (at === -1) throw new Error('index.html has no closing head tag to inject into');
+  return `${html.slice(0, at)}${tags}\n  ${html.slice(at)}`;
+};
+
+/**
  * Put the document's security policy in the document.
  *
  * Build only: the dev server's HMR client runs inline script and `eval`, so a
@@ -17,7 +37,7 @@ import { linkPreviewTags } from './src/linkPreview';
 const documentPolicy = (): Plugin => ({
   name: 'spendapp:document-policy',
   apply: 'build',
-  transformIndexHtml: (html) => html.replace('</head>', `  ${DOCUMENT_META_TAGS}\n  </head>`),
+  transformIndexHtml: (html) => injectIntoHead(html, `  ${DOCUMENT_META_TAGS}`),
 });
 
 /**
@@ -38,7 +58,7 @@ const linkPreview = (): Plugin => ({
       console.warn('[spendapp:link-preview] APP_ORIGIN unset or unusable — og:url/og:image omitted');
       return html;
     }
-    return html.replace('</head>', `  ${tags}\n  </head>`);
+    return injectIntoHead(html, `  ${tags}`);
   },
 });
 

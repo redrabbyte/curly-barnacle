@@ -86,7 +86,21 @@ describe('the built document', () => {
     // Invite links are capabilities; no-referrer is what keeps any URL of this
     // app from reaching a third party on an outbound navigation.
     expect(out).toContain('<meta name="referrer" content="no-referrer" />');
-    expect(out.indexOf(DOCUMENT_META_TAGS)).toBeLessThan(out.indexOf('</head>'));
+    // Inside the head, and after everything the file itself declares — not
+    // merely before the first string that looks like a closing head tag.
+    expect(out.indexOf(DOCUMENT_META_TAGS)).toBeGreaterThan(out.indexOf('<head>'));
+    expect(out.indexOf(DOCUMENT_META_TAGS)).toBeLessThan(out.lastIndexOf('</head>'));
+  });
+
+  it('leaves exactly one place to inject into', () => {
+    // The whole app hung off this. Vite injects the module <script>, the
+    // stylesheet and the manifest link at the *first* `</head>` it finds, so a
+    // second one anywhere in the file — a comment naming the tag was the real
+    // case — swallows all of them into that construct. The build still
+    // succeeds; the page just loads no script and renders white.
+    const html = repoFile('apps/web/index.html');
+    expect(html.split('</head>').length - 1).toBe(1);
+    expect(html.split('</body>').length - 1).toBe(1);
   });
 
   it('is not what the checked-in file already says', () => {

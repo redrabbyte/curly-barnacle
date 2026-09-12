@@ -12,8 +12,10 @@
          itself renders client-side, so this is the only text guaranteed to be
          in the HTML. Keep it truthful — it is the description people see
          before they ever load the app.
-         Note vite.config.ts injects the CSP meta by replacing `</head>`, so
-         anything added here must stay above that tag. -->
+         Never write the closing head tag in this file other than as the
+         tag itself: Vite and vite.config.ts both inject at the *first* one
+         they find, so a second one — even inside a comment like this —
+         swallows the injected <script> and serves a blank page. -->
     <meta
       name="description"
       content="SpendApp is a free, end-to-end encrypted web app for splitting shared expenses with friends, flatmates and partners. Your entries are encrypted in the browser, so the server never sees what you spent."
