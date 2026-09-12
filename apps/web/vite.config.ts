@@ -3,6 +3,7 @@ import react from '@vitejs/plugin-react';
 import { defineConfig, type Plugin } from 'vite';
 import { VitePWA } from 'vite-plugin-pwa';
 import { DOCUMENT_META_TAGS } from './src/documentPolicy';
+import { linkPreviewTags } from './src/linkPreview';
 
 /**
  * Put the document's security policy in the document.
@@ -19,11 +20,34 @@ const documentPolicy = (): Plugin => ({
   transformIndexHtml: (html) => html.replace('</head>', `  ${DOCUMENT_META_TAGS}\n  </head>`),
 });
 
+/**
+ * Inject the absolute-URL link-preview tags, if an origin is configured.
+ *
+ * Separate from `documentPolicy` because it is conditional and environment-fed,
+ * where the policy is unconditional and checked in. See src/linkPreview.ts for
+ * why the hostname cannot live in this repo.
+ */
+const linkPreview = (): Plugin => ({
+  name: 'spendapp:link-preview',
+  apply: 'build',
+  transformIndexHtml: (html) => {
+    const tags = linkPreviewTags(process.env.APP_ORIGIN);
+    if (!tags) {
+      // Visible in the deploy log, because a silently thumbnail-less preview is
+      // hard to trace back to a missing variable months later.
+      console.warn('[spendapp:link-preview] APP_ORIGIN unset or unusable — og:url/og:image omitted');
+      return html;
+    }
+    return html.replace('</head>', `  ${tags}\n  </head>`);
+  },
+});
+
 export default defineConfig({
   // Stamped at build time (UTC date + time); shown small under the title.
   define: { __BUILD_DATE__: JSON.stringify(new Date().toISOString().slice(0, 16).replace('T', ' ')) },
   plugins: [
     documentPolicy(),
+    linkPreview(),
     react(),
     tailwindcss(),
     VitePWA({

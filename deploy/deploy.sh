@@ -66,9 +66,6 @@ export COREPACK_ENABLE_DOWNLOAD_PROMPT=0
 cd "$rel"
 $SUDO pnpm install --frozen-lockfile --prod=false
 
-say "build web"
-$SUDO pnpm --filter web build
-
 # .env is 0600 and owned by the service user, so a non-root invoker cannot
 # open it — read it through sudo instead of sourcing the path. Sourcing and
 # eval carry the same risk here (both interpret the file as shell) and the
@@ -76,6 +73,14 @@ $SUDO pnpm --filter web build
 set -a
 eval "$($SUDO cat "$SHARED/.env")"
 set +a
+
+say "build web"
+# APP_ORIGIN reaches the build only if sudo is told to keep it — sudo scrubs the
+# environment by default (same reason db:migrate names DATABASE_URL below).
+# Without it the build silently drops og:url/og:image and link previews lose
+# their thumbnail; the plugin warns in this log when that happens.
+$SUDO ${SUDO:+--preserve-env=APP_ORIGIN} pnpm --filter web build
+
 
 if [ -z "${VAPID_PUBLIC_KEY:-}" ]; then
   say "generating VAPID keys"

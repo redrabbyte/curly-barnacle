@@ -5,10 +5,49 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="theme-color" content="#0f766e" />
     <link rel="icon" href="/icon.svg" type="image/svg+xml" />
-    <title>SpendApp</title>
+    <title>SpendApp — private, end-to-end encrypted shared expenses</title>
+
+    <!-- Without these the page is an empty app shell: a crawler sees a <title>
+         and nothing else, and the search result is a blank snippet. The app
+         itself renders client-side, so this is the only text guaranteed to be
+         in the HTML. Keep it truthful — it is the description people see
+         before they ever load the app.
+         Note vite.config.ts injects the CSP meta by replacing `</head>`, so
+         anything added here must stay above that tag. -->
+    <meta
+      name="description"
+      content="SpendApp is a free, end-to-end encrypted web app for splitting shared expenses with friends, flatmates and partners. Your entries are encrypted in the browser, so the server never sees what you spent."
+    />
+
+    <!-- Link previews. Unfurlers (Signal, WhatsApp, Discord, Mastodon) fetch a
+         shared link within seconds; without og: tags they render a bare URL.
+         Deliberately NO og:url or og:image: those need an absolute URL, which
+         means a deployment's own hostname, and this repo is public and
+         self-hostable — it must not carry one operator's domain. The deployment
+         serves its own robots.txt/sitemap.xml from outside this repo. -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="SpendApp" />
+    <meta property="og:title" content="SpendApp — private, end-to-end encrypted shared expenses" />
+    <meta
+      property="og:description"
+      content="Split shared expenses without handing your spending history to anyone. Encrypted in your browser; the server only ever stores ciphertext."
+    />
+    <meta name="twitter:card" content="summary" />
   </head>
   <body>
     <div id="root"></div>
+
+    <!-- Text baseline for crawlers and for anyone with JS disabled. The app is
+         client-rendered, so #root is empty in the served HTML. -->
+    <noscript>
+      <h1>SpendApp</h1>
+      <p>
+        SpendApp splits shared expenses between friends, flatmates and partners.
+        Entries are encrypted in your browser before they are sent, so the
+        server stores ciphertext and never learns what you bought.
+      </p>
+      <p>JavaScript is required to use the app.</p>
+    </noscript>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
